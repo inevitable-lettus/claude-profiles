@@ -1,0 +1,21 @@
+# Never commit anything that could contain a credential.
+*.token
+*.secret
+.env
+.env.*
+.envrc
+local/
+build/
+*.pem
+*.key
+id_rsa*
+credentials.json
+
+# macOS noise
+.DS_Store
+
+# Common junk (not expected in this repo, but harmless to ignore)
+__pycache__/
+node_modules/
+venv/
+.venv/

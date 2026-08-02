@@ -1,0 +1,56 @@
+# envrc.example
+#
+# Optional: automatic profile switching per project, using direnv.
+# https://direnv.net  —  install with:  brew install direnv
+#
+# WHY BOTHER
+# ----------
+# Without this you have to remember to type `claude-work` instead of `claude`
+# in your agency projects. Forget once and you have burned the wrong account's
+# quota, or leaked context into the wrong workspace. direnv makes it automatic:
+# cd into the project, the environment switches; cd out, it switches back.
+#
+# HOW TO USE
+# ----------
+#   1. Copy this file into the root of a project belonging to the SECONDARY
+#      account, named exactly `.envrc`:
+#
+#          cp shell/envrc.example ~/code/agency-saas/.envrc
+#
+#   2. direnv blocks unknown .envrc files by design. Approve it:
+#
+#          cd ~/code/agency-saas
+#          direnv allow
+#
+#   3. Add `.envrc` to that project's .gitignore. It contains no secret —
+#      the token is read from the Keychain at use time, never written here —
+#      but your teammates do not want your profile config either way.
+#
+#   4. Confirm it worked:
+#
+#          claude-whoami
+#
+# ---------------------------------------------------------------------------
+
+# Separates settings, session history, and project state.
+export CLAUDE_CONFIG_DIR="$HOME/.claude-work"
+
+# Separates the login. Read from the Keychain on the fly so the token is
+# never stored in this file. `security` prints nothing and exits non-zero if
+# the item is missing, which is why the whole thing is guarded below.
+export CLAUDE_CODE_OAUTH_TOKEN="$(security find-generic-password \
+  -s "claude-code-work-token" \
+  -a "$USER" \
+  -w 2>/dev/null)"
+
+# Marker used by claude-whoami so you can tell at a glance which profile
+# this shell is on.
+export CLAUDE_ACTIVE_PROFILE="work"
+
+# Fail loudly rather than silently falling back to the primary account,
+# which is exactly the mistake this file exists to prevent.
+if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
+  echo "WARNING: no 'work' token found in the Keychain."
+  echo "         Claude Code will fall back to your PRIMARY account here."
+  echo "         Fix: run ./05-setup-cli-profile.sh"
+fi
