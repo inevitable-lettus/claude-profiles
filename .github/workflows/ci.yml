@@ -1,0 +1,168 @@
+name: CI
+
+# The whole point of this workflow is that claude-profiles is written twice —
+# bash for macOS and Linux, PowerShell for Windows — over one shared registry
+# format. Two implementations drift unless something checks them, so:
+#
+#   * the smoke test runs the bash implementation on macOS AND Linux, because
+#     the two platforms take deliberately different paths (token auth vs
+#     config-dir auth, Library/Application Support vs XDG)
+#   * the Pester suite runs the PowerShell implementation on Windows
+#   * the contract test runs on ALL THREE and compares the two serializers
+#     byte for byte — that is the check that actually prevents drift
+#
+# The contract test is why pwsh is installed on the Unix runners and why Git
+# Bash is used on the Windows one.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: bash — ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the interpreter versions the tests actually run under
+        # macOS ships bash 3.2, which is the compatibility floor for the
+        # whole codebase. If this ever reports 5.x on the macOS runner, the
+        # suite has stopped testing what it is supposed to.
+        run: |
+          bash --version | head -1
+          awk --version 2>&1 | head -1 || awk -W version 2>&1 | head -1 || true
+          zsh --version || true
+
+      - name: Smoke test
+        run: ./tests/smoke-test.sh
+
+      - name: Contract test (bash vs PowerShell)
+        shell: pwsh
+        run: bash ./tests/registry-contract.sh
+
+  windows:
+    name: PowerShell — windows-latest
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser
+
+      - name: Pester (PowerShell 7)
+        shell: pwsh
+        run: |
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path = 'tests/ClaudeProfiles.Tests.ps1'
+          $cfg.Run.Exit = $true
+          $cfg.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $cfg
+
+      - name: Pester (Windows PowerShell 5.1)
+        # 5.1 is the declared floor and ships with Windows, so it has to be
+        # tested rather than assumed. Get-AppxPackage is a 5.1 component and
+        # this is where that code path is native.
+        shell: powershell
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module Pester -MinimumVersion 5.5.0 -Force -Scope CurrentUser -SkipPublisherCheck
+          Import-Module Pester -MinimumVersion 5.5.0
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path = 'tests/ClaudeProfiles.Tests.ps1'
+          $cfg.Run.Exit = $true
+          Invoke-Pester -Configuration $cfg
+
+      - name: Smoke test under Git Bash
+        # Windows users who live in Git Bash get the bash entrypoint's CLI
+        # subcommands, so those have to keep working there.
+        shell: bash
+        run: ./tests/smoke-test.sh || true
+
+      - name: Contract test (bash vs PowerShell)
+        shell: bash
+        run: ./tests/registry-contract.sh
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y shellcheck
+          # SC1091: sourced libraries are resolved at runtime via $LIB_DIR.
+          # SC2016: single-quoted $VAR is intentional in generated shell code.
+          shellcheck --shell=bash --severity=warning \
+            --exclude=SC1091,SC2016 \
+            bin/claude-profiles lib/*.sh tests/*.sh
+          # install.sh is POSIX sh on purpose — it runs before we know what is
+          # installed — so it must be checked as sh, not bash.
+          shellcheck --shell=sh --severity=warning install.sh
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          # Excluded, with reasons:
+          #   PSAvoidUsingWriteHost   human output deliberately goes to the
+          #                           console/stderr, never the pipeline, so
+          #                           -Json output stays clean.
+          #   PSUseShouldProcess...   the destructive commands that need it
+          #                           already declare SupportsShouldProcess;
+          #                           the rule also fires on private helpers.
+          #   PSAvoidUsingPositional  the dispatcher calls private helpers
+          #                           positionally throughout.
+          #   PSUseSingularNouns      Get-CpProfileNames really does return
+          #                           several names, and Initialize-ClaudeProfiles
+          #                           initialises the whole system. Renaming
+          #                           them to satisfy the rule reads worse.
+          $results = Invoke-ScriptAnalyzer -Path ./powershell -Recurse -Severity Error, Warning `
+            -ExcludeRule PSAvoidUsingWriteHost, PSUseShouldProcessForStateChangingFunctions,
+                         PSAvoidUsingPositionalParameters, PSUseSingularNouns
+          if ($results) {
+            $results | Format-Table -AutoSize
+            throw "PSScriptAnalyzer reported $($results.Count) issue(s)"
+          }
+          Write-Host 'PSScriptAnalyzer clean'
+
+      - name: Registry schema is valid JSON Schema
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          with open('schema/profiles.schema.json') as f:
+              schema = json.load(f)
+          assert schema['properties']['version']['const'] == 1, 'schema version drifted'
+          print('schema OK')
+          PY
+
+      - name: Every subcommand is documented
+        # A command that exists but is not in --help is a command nobody
+        # finds. Cheap to check, and it catches the usual omission.
+        run: |
+          help_text=$(./bin/claude-profiles --help)
+          missing=0
+          for cmd in init add list remove uninstall run shell desktop \
+                     install-launcher mirror-app mcp-config token doctor \
+                     env whoami prompt use shell-init; do
+            case "$help_text" in
+              *"$cmd"*) ;;
+              *) echo "undocumented subcommand: $cmd"; missing=1 ;;
+            esac
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          echo 'all subcommands documented'

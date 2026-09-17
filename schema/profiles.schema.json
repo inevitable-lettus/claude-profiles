@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/inevitable-lettus/claude-profiles/schema/profiles.schema.json",
+  "title": "claude-profiles registry",
+  "description": "The contract shared by the bash implementation (lib/registry.sh) and the PowerShell module (powershell/ClaudeProfiles). Neither reads this file at runtime — it is documentation for humans and the fixture that tests/registry-contract.sh checks both implementations against. Keep it in step with reg_sort_children() in lib/registry.sh, which defines the canonical key order.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "profiles"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Registry format version. A reader that does not recognise the value must refuse to run rather than guess."
+    },
+    "profiles": {
+      "type": "object",
+      "description": "Keyed by profile name. The primary account is never listed here — it is the account that uses every default location and is deliberately unmanaged.",
+      "propertyNames": {
+        "pattern": "^[a-z0-9][a-z0-9_-]{0,31}$",
+        "not": { "enum": ["primary", "default", "all", "none"] },
+        "description": "Lowercase letters, digits, hyphen and underscore. No dots: the registry's internal flat-path format is dot-delimited. Reserved names are rejected because a profile called 'primary' would make every error message ambiguous. The character set is also the sanitisation boundary for .claude-profile files, which arrive inside cloned repositories and are therefore untrusted."
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "cli": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Present when the profile manages a Claude Code CLI account. Absent for a desktop-only profile.",
+            "required": ["configDir", "auth"],
+            "properties": {
+              "configDir": {
+                "type": "string",
+                "description": "Value for CLAUDE_CONFIG_DIR. Stored with a leading ~ where possible so a synced dotfiles repo is portable. Must never equal ~/.claude, which belongs to the primary account."
+              },
+              "auth": {
+                "enum": ["config-dir", "oauth-token"],
+                "description": "config-dir: CLAUDE_CONFIG_DIR alone isolates the login, because on Linux and Windows .credentials.json lives inside that directory. oauth-token: additionally supply CLAUDE_CODE_OAUTH_TOKEN, which is required on macOS because the login lives in a single shared Keychain item that CLAUDE_CONFIG_DIR does not separate."
+              },
+              "tokenBackend": {
+                "enum": ["keychain", "dpapi", "libsecret", "file"],
+                "description": "Where the OAuth token is stored. Only meaningful when auth is oauth-token. 'file' is a mode-0600 fallback used only where no OS secret store is available, and the tool says so out loud when it writes one."
+              },
+              "tokenCreated": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+                "description": "Date the token was generated. Tokens from `claude setup-token` last one year; the shell integration starts warning at day 335."
+              }
+            }
+          },
+          "desktop": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Present when the profile manages a Claude desktop instance. Absent for a CLI-only profile.",
+            "required": ["userDataDir"],
+            "properties": {
+              "userDataDir": {
+                "type": "string",
+                "description": "Value passed to Electron's --user-data-dir. Everything the instance stores — the encrypted credential blob, MCP config, window state, caches — lands here. Must never equal the primary profile's directory."
+              },
+              "appPath": {
+                "type": "string",
+                "description": "The application binary or bundle this profile launches. Normally the single installed Claude app, shared by every profile. It differs only when the profile uses a mirrored copy."
+              },
+              "mirrored": {
+                "enum": ["true", "false"],
+                "description": "Whether appPath is a mirrored copy rather than the real install. Stored as a string so both implementations serialize it identically. A mirror is a frozen snapshot that does not auto-update; doctor reports how stale it is. macOS needs one only when the Keychain round-trip test fails; Windows needs one whenever the install is MSIX, because Windows refuses to execute anything directly out of C:\\Program Files\\WindowsApps and the --user-data-dir flag therefore cannot be passed."
+              },
+              "launcher": {
+                "type": "string",
+                "description": "Path to the generated launcher, if one was installed: a .app bundle on macOS, a .lnk shortcut on Windows, a .desktop entry on Linux. Recorded so uninstall can find it."
+              }
+            }
+          },
+          "description": {
+            "type": "string",
+            "description": "Free text shown by `claude-profiles list`. Purely for humans."
+          }
+        }
+      }
+    }
+  }
+}

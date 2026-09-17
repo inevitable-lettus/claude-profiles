@@ -1,0 +1,787 @@
+#!/usr/bin/env bash
+#
+# claude-profiles — run several Claude accounts on one machine.
+#
+# One entrypoint, subcommands underneath. Before 1.0 this was six numbered
+# scripts you ran in order; the ordering is now implied by what each command
+# needs, and `doctor` tells you what is missing.
+#
+# Everything lives in lib/. Read them in this order to understand the tool:
+#
+#   lib/platform.sh   what differs between macOS, Windows and Linux
+#   lib/registry.sh   the profile registry, and why it exists
+#   lib/cli.sh        the Claude Code half, and the two auth modes
+#   lib/desktop.sh    the desktop app half, and the --user-data-dir trick
+#   lib/workflow.sh   per-directory switching, and why .claude-profile is
+#                     treated as untrusted input
+#   lib/doctor.sh     every health check
+#
+# Bash 3.2 compatible throughout, because that is what macOS ships and this
+# tool is useless if it needs a newer bash installed first.
+# ---------------------------------------------------------------------------
+
+set -euo pipefail
+
+VERSION="1.0.0"
+
+# ---------------------------------------------------------------------------
+# Locate ourselves, following symlinks.
+# ---------------------------------------------------------------------------
+# install.sh symlinks this into ~/.local/bin, so $0 is usually a link. macOS
+# has no `readlink -f`, hence the loop.
+resolve_self() {
+  local src="$1" dir
+  while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    case "$src" in
+      /*) : ;;
+      *) src="$dir/$src" ;;
+    esac
+  done
+  printf '%s' "$(cd -P "$(dirname "$src")" && pwd)/$(basename "$src")"
+}
+
+CP_SELF="$(resolve_self "${BASH_SOURCE[0]}")"
+ROOT_DIR="$(cd -P "$(dirname "$CP_SELF")/.." && pwd)"
+LIB_DIR="$ROOT_DIR/lib"
+
+for _lib in common platform registry secrets cli desktop workflow doctor; do
+  # shellcheck source=/dev/null
+  . "$LIB_DIR/$_lib.sh" || { printf 'claude-profiles: cannot load %s\n' "$LIB_DIR/$_lib.sh" >&2; exit 1; }
+done
+unset _lib
+
+
+usage() {
+  cat <<EOF
+claude-profiles $VERSION — run several Claude accounts on one machine
+
+USAGE
+  claude-profiles <command> [args]
+
+SETUP
+  init                          create the registry; adopt an existing setup
+  add <name> [options]          register a profile
+  remove <name>                 unregister a profile (asks about its data)
+  list [--json]                 show every profile
+
+USING A PROFILE
+  run <name> [-- args...]       run Claude Code as that profile
+  shell <name>                  subshell where plain 'claude' is that profile
+  desktop <name>                launch the desktop app on that profile
+  whoami                        which profile is this shell on?
+
+WORKFLOW
+  use <name>                    write .claude-profile here, for auto-switching
+  prompt                        active profile, for a prompt or statusline
+  env <name> | env --unset      shell-eval'able environment (used by the hook)
+  shell-init <zsh|bash|pwsh>    the line to put in your shell rc
+
+MAINTENANCE
+  doctor [<name>] [--json] [--probe]    health check
+  token refresh <name>          generate and store a new OAuth token
+  install-launcher <name>       clickable launcher for the desktop profile
+  mirror-app <name>             escape hatch — see 'doctor' first
+  mcp-config <name>             path to that profile's MCP template
+  uninstall                     remove everything, asking about each item
+
+ADD OPTIONS
+  --cli / --no-cli              manage a Claude Code account (default: yes)
+  --desktop / --no-desktop      manage a desktop instance (default: if found)
+  --auth <config-dir|oauth-token>
+  --config-dir <path>
+  --user-data-dir <path>
+  --app-path <path>
+  --description <text>
+
+Docs: README.md, and docs/ for the per-platform detail.
+EOF
+}
+
+
+# ---------------------------------------------------------------------------
+# init
+# ---------------------------------------------------------------------------
+# Creates the registry, and adopts anything the pre-1.0 numbered scripts left
+# behind so an existing setup keeps working rather than being orphaned.
+cmd_init() {
+  registry_load
+
+  local created=0
+  if [ ! -f "$(registry_path)" ]; then created=1; fi
+
+  mkdir -p "$(platform_state_home)"
+  chmod 700 "$(platform_state_home)" 2>/dev/null || true
+
+  if [ "$created" = "1" ]; then
+    ok "Created $(platform_state_home)"
+  else
+    info "Registry already exists: $(registry_path)"
+  fi
+
+  # --- adopt a pre-1.0 setup -------------------------------------------------
+  # The old scripts hardcoded the name "work". If those artefacts are on disk
+  # and there is no 'work' profile yet, offer to take them over in place —
+  # nothing is moved, copied or logged out.
+  #
+  # CLAUDE_PROFILES_NO_ADOPT=1 skips the whole thing. Adoption looks at real
+  # paths in the real home directory, which makes `init` behave differently
+  # depending on whose machine it runs on — fine for a person, wrong for a
+  # test or a scripted provision that wants a known-empty registry.
+  if [ "${CLAUDE_PROFILES_NO_ADOPT:-}" != "1" ] && ! registry_has_profile work; then
+    local legacy_cli="$HOME/.claude-work"
+    local legacy_desktop; legacy_desktop="$(platform_default_desktop_user_data_dir work)"
+    local legacy_launcher="/Applications/Claude Work.app"
+    local legacy_token=0
+    [ "$(platform_id)" = "macos" ] && security find-generic-password -s "claude-code-work-token" >/dev/null 2>&1 && legacy_token=1
+
+    # Only offer adoption when there is real profile DATA to adopt. A stray
+    # launcher app on its own is not worth registering a profile for — it
+    # points at a user-data directory that no longer exists.
+    if [ -d "$legacy_cli" ] || [ -d "$legacy_desktop" ] || [ "$legacy_token" = "1" ]; then
+      header "Existing setup detected"
+      say "These look like they came from the pre-1.0 scripts:"
+      [ -d "$legacy_cli" ]        && say "  CLI config dir     $legacy_cli"
+      [ -d "$legacy_desktop" ]    && say "  Desktop profile    $legacy_desktop"
+      [ -e "$legacy_launcher" ]   && say "  Launcher app       $legacy_launcher"
+      [ "$legacy_token" = "1" ]   && say "  Keychain token     claude-code-work-token"
+      say ""
+      say "Adopting them registers a profile called 'work' pointing at these"
+      say "exact paths. Nothing is moved, copied, or logged out."
+      say ""
+
+      if confirm "Adopt them as the 'work' profile?"; then
+        [ -d "$legacy_cli" ] && {
+          reg_set_str '.profiles.work.cli.configDir' "$(path_contract "$legacy_cli")"
+          reg_set_str '.profiles.work.cli.auth' "$(platform_default_auth_mode)"
+        }
+        if [ "$legacy_token" = "1" ]; then
+          # The old Keychain service name was claude-code-work-token; ours is
+          # claude-profiles-work-token. Copy the value across rather than
+          # asking for a fresh token, and leave the old item in place so
+          # nothing is destroyed if the adoption turns out to be wrong.
+          local old_token
+          if old_token="$(security find-generic-password -s "claude-code-work-token" -a "$USER" -w 2>/dev/null)"; then
+            secret_set keychain work "$old_token" \
+              && ok "Copied the existing token to $(secret_service_name work)"
+            reg_set_str '.profiles.work.cli.tokenBackend' 'keychain'
+            if [ -f "$legacy_cli/.token-created" ]; then
+              reg_set_str '.profiles.work.cli.tokenCreated' "$(head -1 "$legacy_cli/.token-created")"
+            fi
+            info "The old Keychain item was left alone. Remove it with:"
+            info "  security delete-generic-password -s claude-code-work-token"
+          else
+            warn "Could not read the old token — run: claude-profiles token refresh work"
+          fi
+        fi
+        [ -d "$legacy_desktop" ] && {
+          reg_set_str '.profiles.work.desktop.userDataDir' "$(path_contract "$legacy_desktop")"
+          local app
+          app="$(platform_find_desktop_app)" && reg_set_str '.profiles.work.desktop.appPath' "$app"
+          reg_set_str '.profiles.work.desktop.mirrored' 'false'
+        }
+        [ -e "$legacy_launcher" ] && reg_set_str '.profiles.work.desktop.launcher' "$legacy_launcher"
+        reg_set_str '.profiles.work.description' 'adopted from the pre-1.0 scripts'
+        registry_save
+        ok "Adopted as profile 'work'"
+      else
+        info "Left alone. Add profiles from scratch with: claude-profiles add <name>"
+      fi
+    fi
+  fi
+
+  registry_save
+
+  header "Next"
+  if [ "$(registry_count)" = "0" ]; then
+    say "  claude-profiles add work        # register your second account"
+  else
+    say "  claude-profiles list            # what you have"
+    say "  claude-profiles doctor          # is it healthy?"
+  fi
+  say "  eval \"\$(claude-profiles shell-init $(basename "${SHELL:-zsh}"))\"   # add to your shell rc"
+}
+
+
+# ---------------------------------------------------------------------------
+# add
+# ---------------------------------------------------------------------------
+cmd_add() {
+  local name="" want_cli="" want_desktop="" auth="" config_dir="" udd="" app_path="" description=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --cli)            want_cli=1; shift ;;
+      --no-cli)         want_cli=0; shift ;;
+      --desktop)        want_desktop=1; shift ;;
+      --no-desktop)     want_desktop=0; shift ;;
+      --auth)           auth="${2:-}"; shift 2 ;;
+      --config-dir)     config_dir="${2:-}"; shift 2 ;;
+      --user-data-dir)  udd="${2:-}"; shift 2 ;;
+      --app-path)       app_path="${2:-}"; shift 2 ;;
+      --description)    description="${2:-}"; shift 2 ;;
+      -*)               die "Unknown option '$1'. See: claude-profiles --help" ;;
+      *)                [ -z "$name" ] || die "Only one profile name at a time."; name="$1"; shift ;;
+    esac
+  done
+
+  [ -n "$name" ] || die "usage: claude-profiles add <name> [options]"
+  require_profile_name "$name"
+
+  registry_load
+  local updating=0
+  registry_has_profile "$name" && updating=1
+
+  # Defaults. CLI on unless refused; desktop on if an app is actually
+  # installed, because most people want both and the ones who do not are
+  # better served by --no-desktop than by an extra prompt.
+  [ -n "$want_cli" ] || want_cli=1
+  if [ -z "$want_desktop" ]; then
+    if [ -n "$app_path" ] || [ -n "$udd" ] || platform_find_desktop_app >/dev/null 2>&1; then
+      want_desktop=1
+    else
+      want_desktop=0
+    fi
+  fi
+
+  [ "$want_cli" = "0" ] && [ "$want_desktop" = "0" ] \
+    && die "Nothing to do: both --no-cli and --no-desktop were given."
+
+  # --- CLI half ------------------------------------------------------------
+  if [ "$want_cli" = "1" ]; then
+    [ -n "$config_dir" ] || config_dir="$(platform_default_cli_config_dir "$name")"
+    config_dir="$(path_expand "$config_dir")"
+
+    [ "$config_dir" != "$(platform_primary_cli_config_dir)" ] \
+      || die "$config_dir is the primary account's config directory. Pick another with --config-dir."
+
+    [ -n "$auth" ] || auth="$(platform_default_auth_mode)"
+    case "$auth" in
+      config-dir|oauth-token) : ;;
+      *) die "--auth must be 'config-dir' or 'oauth-token'" ;;
+    esac
+
+    # config-dir on macOS does not isolate the login: credentials live in one
+    # shared Keychain item that CLAUDE_CONFIG_DIR does not touch, so the
+    # second /login overwrites the first. Allowed — someone may be scripting
+    # a registry for another machine — but never silently.
+    if [ "$auth" = "config-dir" ] && [ "$(platform_id)" = "macos" ]; then
+      warn "On macOS, CLAUDE_CONFIG_DIR does NOT separate the login — both profiles"
+      warn "would read the same Keychain item and the second /login would overwrite"
+      warn "the first. Use --auth oauth-token unless you know why you want this."
+    fi
+
+    reg_set_str ".profiles.$name.cli.configDir" "$(path_contract "$config_dir")"
+    reg_set_str ".profiles.$name.cli.auth" "$auth"
+  elif [ "$updating" = "1" ]; then
+    reg_unset_subtree ".profiles.$name.cli"
+  fi
+
+  # --- desktop half --------------------------------------------------------
+  if [ "$want_desktop" = "1" ]; then
+    [ -n "$udd" ] || udd="$(platform_default_desktop_user_data_dir "$name")"
+    udd="$(path_expand "$udd")"
+
+    [ "$udd" != "$(platform_primary_desktop_user_data_dir)" ] \
+      || die "$udd is the primary profile's directory. Pick another with --user-data-dir."
+
+    if [ -z "$app_path" ]; then
+      app_path="$(platform_find_desktop_app)" || die \
+        "Could not find the Claude desktop app. Pass --app-path, or use --no-desktop for a CLI-only profile."
+    fi
+    app_path="$(path_expand "$app_path")"
+    [ -e "$app_path" ] || die "No app at $app_path"
+
+    reg_set_str ".profiles.$name.desktop.userDataDir" "$(path_contract "$udd")"
+    reg_set_str ".profiles.$name.desktop.appPath" "$(path_contract "$app_path")"
+    [ -n "$(reg_get_or ".profiles.$name.desktop.mirrored" "")" ] \
+      || reg_set_str ".profiles.$name.desktop.mirrored" "false"
+  elif [ "$updating" = "1" ]; then
+    reg_unset_subtree ".profiles.$name.desktop"
+  fi
+
+  [ -n "$description" ] && reg_set_str ".profiles.$name.description" "$description"
+
+  local problems
+  if ! problems="$(registry_validate)"; then
+    while IFS= read -r p; do [ -n "$p" ] && fail "$p"; done <<EOF
+$problems
+EOF
+    # Repeat the problems in the fatal line as well as the FAIL lines above:
+    # a caller redirecting only stderr's last line, or a test asserting on the
+    # message, should not have to scrape for them.
+    die "Refusing to save a registry with those problems: $(printf '%s' "$problems" | tr '\n' ';')"
+  fi
+  registry_save
+
+  if [ "$updating" = "1" ]; then
+    ok "Updated profile '$name'"
+  else
+    ok "Registered profile '$name'"
+  fi
+
+  # --- follow-through ------------------------------------------------------
+  if [ "$want_cli" = "1" ]; then
+    cli_create_config_dir "$name"
+
+    if [ "$auth" = "oauth-token" ]; then
+      header "This profile needs an OAuth token"
+      say "On $(platform_label), CLAUDE_CONFIG_DIR separates settings, history and"
+      say "sessions — but not the login. Both profiles would read the same"
+      say "Keychain item, so the second /login overwrites the first."
+      say ""
+      say "A long-lived OAuth token sidesteps that: it sits above the"
+      say "subscription login in Claude Code's credential precedence."
+      say ""
+      say "${C_BOLD}Two costs, decide before you continue:${C_RESET}"
+      say "  1. A token profile cannot use Remote Control or claude.ai"
+      say "     connectors. Local MCP servers still work. Put whichever"
+      say "     account you use with connectors on the PRIMARY profile."
+      say "  2. The token expires after a year."
+      say ""
+      # Only offer when there is someone to paste a token. Capturing one is
+      # inherently interactive, so under automation the offer would be
+      # answered yes by CLAUDE_PROFILES_ASSUME_YES and then fail — registering
+      # the profile but reporting an error.
+      if [ ! -t 0 ]; then
+        info "Run this from a terminal when you are ready: claude-profiles token refresh $name"
+      elif confirm "Set up the token now?"; then
+        cli_capture_token "$name"
+      else
+        info "Later: claude-profiles token refresh $name"
+      fi
+    else
+      header "Log in to this profile"
+      say "On $(platform_label), CLAUDE_CONFIG_DIR relocates .credentials.json into"
+      say "the profile's own directory, so the login is isolated by that"
+      say "variable alone. Nothing else to configure — just log in:"
+      say ""
+      say "    claude-profiles run $name -- /login"
+    fi
+  fi
+
+  if [ "$want_desktop" = "1" ]; then
+    desktop_init_mcp_template "$name"
+    say ""
+    say "Desktop: claude-profiles desktop $name"
+    say "         claude-profiles install-launcher $name   # clickable"
+  fi
+
+  say ""
+  info "Reload your shell to pick up 'claude-$name': exec \$SHELL"
+}
+
+
+# ---------------------------------------------------------------------------
+# list
+# ---------------------------------------------------------------------------
+cmd_list() {
+  local as_json=0
+  [ "${1:-}" = "--json" ] && as_json=1
+
+  registry_load
+
+  if [ "$as_json" = "1" ]; then
+    # Re-serialising the registry rather than inventing a second format keeps
+    # this identical to what the PowerShell module prints, which is what
+    # tests/registry-contract.sh compares.
+    registry_serialize
+    return 0
+  fi
+
+  local names; names="$(registry_profiles)"
+  if [ -z "$names" ]; then
+    say "No profiles registered yet."
+    say "Add one with: claude-profiles add work"
+    return 0
+  fi
+
+  local name active
+  active="${CLAUDE_ACTIVE_PROFILE:-}"
+
+  printf '\n' >&2
+  for name in $names; do
+    if [ "$name" = "$active" ]; then
+      printf '%s* %s%s' "$C_GREEN$C_BOLD" "$name" "$C_RESET" >&2
+    else
+      printf '  %s%s%s' "$C_BOLD" "$name" "$C_RESET" >&2
+    fi
+    local desc; desc="$(reg_get_or ".profiles.$name.description" "")"
+    [ -n "$desc" ] && printf '%s  — %s%s' "$C_DIM" "$desc" "$C_RESET" >&2
+    printf '\n' >&2
+
+    if cli_profile_configured "$name"; then
+      printf '      cli      %s  (%s)\n' \
+        "$(reg_get_or ".profiles.$name.cli.configDir" "")" \
+        "$(cli_auth_mode "$name")" >&2
+    fi
+    if desktop_profile_configured "$name"; then
+      local mirror_note=""
+      desktop_is_mirrored "$name" && mirror_note="  [mirrored app]"
+      printf '      desktop  %s%s\n' \
+        "$(reg_get_or ".profiles.$name.desktop.userDataDir" "")" "$mirror_note" >&2
+    fi
+  done
+  printf '\n' >&2
+
+  if [ -n "$active" ]; then
+    info "This shell is on '$active'."
+  else
+    info "This shell is on the primary account."
+  fi
+}
+
+
+# ---------------------------------------------------------------------------
+# remove
+# ---------------------------------------------------------------------------
+cmd_remove() {
+  local name="${1:-}"
+  [ -n "$name" ] || die "usage: claude-profiles remove <name>"
+  registry_load --required
+  registry_has_profile "$name" || die "No profile called '$name'."
+
+  header "Removing profile '$name'"
+  say "Unregistering is separate from deleting data. You will be asked about"
+  say "each piece of data individually, and your PRIMARY account is never"
+  say "touched by any of it."
+
+  local dir udd launcher app backend
+  dir="$(cli_config_dir "$name")"
+  udd="$(desktop_user_data_dir "$name")"
+  launcher="$(path_expand "$(reg_get_or ".profiles.$name.desktop.launcher" "")")"
+  app="$(desktop_app_path "$name")"
+  backend="$(cli_token_backend "$name")"
+
+  if [ -n "$dir" ] && [ -d "$dir" ]; then
+    say ""
+    warn "$dir holds this profile's session history and project state."
+    confirm "Delete it?" && { rm -rf "$dir" && ok "Deleted $dir"; }
+  fi
+
+  if [ -n "$udd" ] && [ -d "$udd" ]; then
+    say ""
+    warn "$udd holds this profile's desktop login, chat cache and MCP config."
+    warn "Deleting it means logging in again next time."
+    confirm "Delete it?" && { rm -rf "$udd" && ok "Deleted $udd"; }
+  fi
+
+  if [ -n "$launcher" ] && [ -e "$launcher" ]; then
+    say ""
+    confirm "Delete the launcher at $launcher?" && { rm -rf "$launcher" && ok "Deleted $launcher"; }
+  fi
+
+  if desktop_is_mirrored "$name" && [ -n "$app" ] && [ -e "$app" ]; then
+    say ""
+    confirm "Delete the mirrored app at $app?" && { rm -rf "$app" && ok "Deleted $app"; }
+  fi
+
+  if secret_exists "$backend" "$name"; then
+    say ""
+    warn "Deleting the stored token does NOT revoke it."
+    warn "To actually revoke it, remove the authorisation in your claude.ai settings."
+    confirm "Delete the stored token?" && { secret_delete "$backend" "$name" && ok "Deleted the stored token"; }
+  fi
+
+  local template; template="$(desktop_mcp_template_path "$name")"
+  if [ -f "$template" ]; then
+    say ""
+    confirm "Delete the MCP template at $template?" && { rm -f "$template" && ok "Deleted $template"; }
+  fi
+
+  reg_unset_subtree ".profiles.$name"
+  registry_save
+  ok "Unregistered '$name'"
+  info "Reload your shell to drop 'claude-$name': exec \$SHELL"
+}
+
+
+# ---------------------------------------------------------------------------
+# uninstall
+# ---------------------------------------------------------------------------
+cmd_uninstall() {
+  registry_load
+  header "Uninstall"
+  say "This walks every profile, then removes the registry itself."
+  say "Your PRIMARY account — $(platform_primary_cli_config_dir), the default"
+  say "desktop profile, and Claude Code's own credential — is never touched."
+
+  local name
+  for name in $(registry_profiles); do
+    cmd_remove "$name"
+  done
+
+  say ""
+  if confirm "Delete the claude-profiles state directory ($(platform_state_home))?"; then
+    rm -rf "$(platform_state_home)"
+    ok "Deleted $(platform_state_home)"
+  fi
+
+  header "Left for you to do by hand"
+  cat >&2 <<EOF
+  1. Remove the shell-init line from your shell rc:
+         eval "\$(claude-profiles shell-init ...)"
+
+  2. Delete any .claude-profile files you left in projects:
+         find ~ -maxdepth 4 -name .claude-profile 2>/dev/null
+
+  3. Revoke any OAuth tokens in your claude.ai account settings.
+     Deleting the local copy does not revoke the token.
+EOF
+}
+
+
+# ---------------------------------------------------------------------------
+# env / whoami / prompt / use
+# ---------------------------------------------------------------------------
+
+# cmd_env — shell-eval'able environment for a profile.
+#
+# Used by the auto-switch hook and by claude-profile-use. Everything is
+# single-quoted through sh_quote.
+#
+# On an oauth-token profile this necessarily puts the token into the calling
+# shell's environment — that is what makes plain `claude` work after an
+# automatic switch. It is the same trade `claude-profiles shell` makes. If you
+# would rather not, set CLAUDE_PROFILES_AUTOSWITCH_TOKEN=0: the config dir is
+# still switched and `claude-<name>` still works, but plain `claude` will fall
+# back to your primary login.
+cmd_env() {
+  local name="${1:-}"
+  [ -n "$name" ] || die "usage: claude-profiles env <name> | claude-profiles env --unset"
+
+  if [ "$name" = "--unset" ]; then
+    printf 'unset CLAUDE_CONFIG_DIR CLAUDE_CODE_OAUTH_TOKEN CLAUDE_ACTIVE_PROFILE\n'
+    return 0
+  fi
+
+  require_profile_name "$name"
+  registry_load --required
+  registry_has_profile "$name" || die \
+    "No profile called '$name'. If a .claude-profile file asked for it, either register it (claude-profiles add $name) or delete the file."
+  cli_profile_configured "$name" || die "Profile '$name' has no CLI half."
+
+  local dir auth
+  dir="$(cli_config_dir "$name")"
+  auth="$(cli_auth_mode "$name")"
+
+  printf 'export CLAUDE_CONFIG_DIR=%s\n' "$(sh_quote "$dir")"
+  printf 'export CLAUDE_ACTIVE_PROFILE=%s\n' "$(sh_quote "$name")"
+
+  if [ "$auth" = "oauth-token" ]; then
+    if [ "${CLAUDE_PROFILES_AUTOSWITCH_TOKEN:-1}" = "0" ]; then
+      printf 'unset CLAUDE_CODE_OAUTH_TOKEN\n'
+    else
+      local token
+      if token="$(secret_get "$(cli_token_backend "$name")" "$name")"; then
+        printf 'export CLAUDE_CODE_OAUTH_TOKEN=%s\n' "$(sh_quote "$token")"
+      else
+        # Emit valid shell that fails loudly, rather than silently leaving
+        # the shell on the primary login.
+        printf 'unset CLAUDE_CODE_OAUTH_TOKEN\n'
+        printf 'printf %s >&2\n' "$(sh_quote "[claude-profiles] no token stored for '$name' — plain 'claude' will use your PRIMARY account. Fix: claude-profiles token refresh $name
+")"
+      fi
+    fi
+  else
+    printf 'unset CLAUDE_CODE_OAUTH_TOKEN\n'
+  fi
+}
+
+cmd_whoami() {
+  registry_load
+  local active="${CLAUDE_ACTIVE_PROFILE:-}"
+
+  if [ -n "$active" ]; then
+    printf 'Profile:     %s\n' "$active"
+    printf 'Config dir:  %s\n' "${CLAUDE_CONFIG_DIR:-unset}"
+    if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+      printf 'Auth:        CLAUDE_CODE_OAUTH_TOKEN (precedence rank 5)\n'
+    else
+      printf 'Auth:        %s/.credentials.json via /login\n' "${CLAUDE_CONFIG_DIR:-?}"
+    fi
+    [ -n "${_CLAUDE_PROFILES_AUTO:-}" ] && printf 'Set by:      .claude-profile in this directory tree\n'
+  else
+    printf 'Profile:     primary (default, unmanaged)\n'
+    printf 'Config dir:  %s\n' "${CLAUDE_CONFIG_DIR:-$(platform_primary_cli_config_dir)}"
+    case "$(platform_id)" in
+      macos) printf 'Auth:        macOS Keychain "Claude Code-credentials" via /login\n' ;;
+      *)     printf 'Auth:        %s/.credentials.json via /login\n' "$(platform_primary_cli_config_dir)" ;;
+    esac
+  fi
+
+  # Anything above rank 5 silently wins; say so here rather than letting
+  # someone debug it from scratch.
+  [ -n "${ANTHROPIC_AUTH_TOKEN:-}" ] && printf 'WARNING:     ANTHROPIC_AUTH_TOKEN is set and outranks the above\n'
+  [ -n "${ANTHROPIC_API_KEY:-}" ]    && printf 'WARNING:     ANTHROPIC_API_KEY is set and outranks the above\n'
+
+  printf '\n'
+  printf 'For the authoritative answer, run "claude" and use /status — that\n'
+  printf 'reports the account the CLI itself thinks it is using, rather than\n'
+  printf 'what the environment implies.\n'
+}
+
+cmd_prompt() {
+  if [ "${1:-}" = "--help" ]; then
+    cat <<'EOF'
+claude-profiles prompt — print the active profile, or nothing.
+
+Cheap enough for a prompt: it reads one environment variable and exits.
+
+  zsh / bash    the shell integration already exports CLAUDE_ACTIVE_PROFILE,
+                so prefer the variable directly and spawn nothing:
+
+                    PROMPT='${CLAUDE_ACTIVE_PROFILE:+($CLAUDE_ACTIVE_PROFILE) }'$PROMPT
+
+  starship      [custom.claude]
+                command = "claude-profiles prompt"
+                when = true
+                format = "[($output)]($style) "
+
+  oh-my-posh    { "type": "command",
+                  "properties": { "command": "claude-profiles prompt" } }
+
+  Claude Code   in settings.json:
+  statusLine        "statusLine": { "type": "command",
+                                    "command": "claude-profiles prompt" }
+EOF
+    return 0
+  fi
+  printf '%s' "${CLAUDE_ACTIVE_PROFILE:-}"
+}
+
+cmd_use() {
+  local name="${1:-}"
+  [ -n "$name" ] || die "usage: claude-profiles use <name>"
+  require_profile_name "$name"
+  registry_load --required
+  registry_has_profile "$name" || die "No profile called '$name'. See: claude-profiles list"
+
+  local target="$PWD/$PROFILE_FILE_NAME"
+  if [ -f "$target" ]; then
+    local current; IFS= read -r current < "$target" || true
+    [ "$current" = "$name" ] && { info "$target already selects '$name'"; return 0; }
+    confirm "$target currently selects '$current'. Overwrite with '$name'?" || die "Aborted."
+  fi
+
+  printf '%s\n' "$name" > "$target"
+  ok "Wrote $target"
+  say ""
+  say "Shells with the integration loaded will switch to '$name' inside this"
+  say "directory tree. Add it to .gitignore unless your whole team shares the"
+  say "profile name — the file contains no secret, but it does assume a"
+  say "profile of that name exists on the reader's machine."
+}
+
+
+# ---------------------------------------------------------------------------
+# dispatch
+# ---------------------------------------------------------------------------
+main() {
+  local cmd="${1:-}"
+  [ $# -gt 0 ] && shift
+
+  case "$cmd" in
+    ""|-h|--help|help)  usage ;;
+    -V|--version|version) printf 'claude-profiles %s\n' "$VERSION" ;;
+
+    init)     cmd_init "$@" ;;
+    add)      cmd_add "$@" ;;
+    list|ls)  cmd_list "$@" ;;
+    remove|rm) cmd_remove "$@" ;;
+    uninstall) cmd_uninstall "$@" ;;
+
+    run)
+      local name="${1:-}"
+      [ -n "$name" ] || die "usage: claude-profiles run <name> [-- args...]"
+      shift
+      # Accept both `run work -- -p hi` and `run work -p hi`.
+      [ "${1:-}" = "--" ] && shift
+      registry_load --required
+      cli_run "$name" "$@"
+      ;;
+
+    shell)
+      [ -n "${1:-}" ] || die "usage: claude-profiles shell <name>"
+      registry_load --required
+      cli_shell "$1"
+      ;;
+
+    desktop)
+      [ -n "${1:-}" ] || die "usage: claude-profiles desktop <name>"
+      registry_load --required
+      local dname="$1"; shift
+      desktop_launch "$dname" "$@"
+      ;;
+
+    install-launcher)
+      [ -n "${1:-}" ] || die "usage: claude-profiles install-launcher <name>"
+      registry_load --required
+      desktop_install_launcher "$1"
+      ;;
+
+    mirror-app)
+      [ -n "${1:-}" ] || die "usage: claude-profiles mirror-app <name>"
+      registry_load --required
+      desktop_mirror "$1"
+      ;;
+
+    mcp-config)
+      [ -n "${1:-}" ] || die "usage: claude-profiles mcp-config <name>"
+      registry_load --required
+      registry_has_profile "$1" || die "No profile called '$1'."
+      desktop_init_mcp_template "$1"
+      printf '%s\n' "$(desktop_mcp_template_path "$1")"
+      ;;
+
+    token)
+      local sub="${1:-}"
+      case "$sub" in
+        refresh)
+          [ -n "${2:-}" ] || die "usage: claude-profiles token refresh <name>"
+          registry_load --required
+          registry_has_profile "$2" || die "No profile called '$2'."
+          cli_capture_token "$2"
+          ;;
+        *) die "usage: claude-profiles token refresh <name>" ;;
+      esac
+      ;;
+
+    doctor)
+      local only="" probe=0
+      DOCTOR_AS_JSON=0
+      while [ $# -gt 0 ]; do
+        case "$1" in
+          --json)  DOCTOR_AS_JSON=1; shift ;;
+          --probe) probe=1; shift ;;
+          -*)      die "Unknown option '$1'" ;;
+          *)       only="$1"; shift ;;
+        esac
+      done
+      doctor_run "$only" "$probe"
+      ;;
+
+    env)      cmd_env "$@" ;;
+    whoami)   cmd_whoami "$@" ;;
+    prompt)   cmd_prompt "$@" ;;
+    use)      cmd_use "$@" ;;
+    resolve)
+      # Used by the shell hook's slow path and by tests.
+      workflow_resolve || exit 1
+      ;;
+
+    shell-init)
+      [ -n "${1:-}" ] || die "usage: claude-profiles shell-init <zsh|bash|pwsh>"
+      workflow_shell_init "$1"
+      ;;
+
+    *) die "Unknown command '$cmd'. See: claude-profiles --help" ;;
+  esac
+}
+
+# DOCTOR_AS_JSON has to exist before doctor.sh's helpers run under `set -u`.
+# shellcheck disable=SC2034  # read by lib/doctor.sh
+DOCTOR_AS_JSON=0
+
+main "$@"

@@ -1,20 +1,36 @@
 # Never commit anything that could contain a credential.
 *.token
 *.secret
+*.dpapi
 .env
 .env.*
 .envrc
-local/
-build/
+credentials.json
+.credentials.json
 *.pem
 *.key
 id_rsa*
-credentials.json
 
-# macOS noise
+# A .claude-profile in THIS repo would switch contributors' accounts while
+# they work on the tool. It is meant to live in your own projects.
+.claude-profile
+
+# Build and scratch output
+build/
+local/
+dist/
+
+# OS noise
 .DS_Store
+Thumbs.db
+desktop.ini
 
-# Common junk (not expected in this repo, but harmless to ignore)
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Common junk (not expected here, but harmless to ignore)
 __pycache__/
 node_modules/
 venv/
