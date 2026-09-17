@@ -297,7 +297,10 @@ test_registry() {
 
   # Owner-only. The registry names every profile directory you have.
   local mode
-  mode="$(stat -f '%Lp' "$reg" 2>/dev/null || stat -c '%a' "$reg" 2>/dev/null)"
+  # GNU stat must be tried FIRST: its -f means "filesystem status", which
+  # succeeds and prints a File: block, so a BSD-first order never falls
+  # through on Linux. BSD stat has no -c at all, so it fails cleanly.
+  mode="$(stat -c '%a' "$reg" 2>/dev/null || stat -f '%Lp' "$reg" 2>/dev/null)"
   assert_eq "registry is mode 600" "600" "$mode"
 
   cp_run add work --no-desktop --auth oauth-token --description 'agency "quoted"' >/dev/null
@@ -609,6 +612,15 @@ test_linux_pass() {
   section "Linux pass (uname stub flipped)"
 
   printf '#!/usr/bin/env bash\necho "Linux"\n' > "$STUB_BIN/uname"
+
+  # platform_find_desktop_app looks for claude-desktop on PATH on Linux. The
+  # macOS stub is named `claude`, which satisfied that lookup only because
+  # HFS+/APFS are case-insensitive — on a case-sensitive filesystem it did
+  # not, and the desktop checks silently skipped. Give Linux its own stub so
+  # the result does not depend on the host's filesystem semantics.
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$STUB_BIN/claude-desktop"
+  chmod +x "$STUB_BIN/claude-desktop"
+
   local lhome="$SANDBOX/linux-home"
   mkdir -p "$lhome"
 
@@ -638,6 +650,7 @@ test_linux_pass() {
   assert_contains "Linux doctor explains why profiles cannot collide" "inside the user-data directory" "$human"
 
   printf '#!/usr/bin/env bash\necho "Darwin"\n' > "$STUB_BIN/uname"
+  rm -f "$STUB_BIN/claude-desktop"
 }
 
 

@@ -49,6 +49,14 @@ if [ -z "$PWSH" ]; then
 fi
 printf '  using %s\n' "$PWSH"
 
+# Under Git Bash on Windows, bash paths (/d/a/..., /tmp/...) are meaningless
+# to PowerShell — it is a native Windows process and needs D:\a\... So every
+# path handed across that boundary goes through cygpath. Elsewhere cygpath
+# does not exist and paths pass through untouched.
+winpath() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi
+}
+
 mkdir -p "$SANDBOX/bash" "$SANDBOX/pwsh"
 
 # ---------------------------------------------------------------------------
@@ -106,11 +114,11 @@ write_fixture "$SANDBOX/pwsh/profiles.json"
 CLAUDE_PROFILES_HOME="$SANDBOX/bash" "$CP" list --json > "$SANDBOX/from-bash.json" 2>"$SANDBOX/bash.err"
 bash_rc=$?
 
-CLAUDE_PROFILES_HOME="$SANDBOX/pwsh" "$PWSH" -NoProfile -NonInteractive -Command "
+CLAUDE_PROFILES_HOME="$(winpath "$SANDBOX/pwsh")" "$PWSH" -NoProfile -NonInteractive -Command "
   \$ErrorActionPreference = 'Stop'
-  Import-Module '$MODULE' -Force
+  Import-Module '$(winpath "$MODULE")' -Force
   \$text = Get-ClaudeProfile -Json
-  [IO.File]::WriteAllText('$SANDBOX/from-pwsh.json', \$text, [Text.UTF8Encoding]::new(\$false))
+  [IO.File]::WriteAllText('$(winpath "$SANDBOX/from-pwsh.json")', \$text, [Text.UTF8Encoding]::new(\$false))
 " > "$SANDBOX/pwsh.out" 2>"$SANDBOX/pwsh.err"
 pwsh_rc=$?
 
