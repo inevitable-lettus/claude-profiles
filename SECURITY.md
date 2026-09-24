@@ -17,15 +17,16 @@ Anthropic, not here: https://www.anthropic.com/responsible-disclosure-policy
 
 ## What this tool handles
 
-**Long-lived OAuth tokens**, but only for profiles using `oauth-token` auth —
-which on Windows and Linux is unusual, because `CLAUDE_CONFIG_DIR` isolates
-the login by itself there. On macOS it is the normal case.
+**Long-lived OAuth tokens**, but only for profiles using `oauth-token` auth,
+which is opt-in on every platform: `CLAUDE_CONFIG_DIR` isolates the login by
+itself, so most profiles never have a token. Their logins are stored by Claude
+Code itself, and this tool only ever reads Keychain metadata about them.
 
 Where a token is stored:
 
 | Platform | Store | Notes |
 |---|---|---|
-| macOS | Keychain, service `claude-profiles-<name>-token` | Cannot collide with Claude Code's own `Claude Code-credentials` |
+| macOS | Keychain, service `claude-profiles-<name>-token` | Cannot collide with Claude Code's own `Claude Code-credentials*` items |
 | Windows | DPAPI-encrypted file, ACL stripped to the current user | Bound to one user on one machine |
 | Linux | `secret-tool` / libsecret | Preferred when available |
 | Fallback | mode-0600 file | Only when no OS store exists, and the tool says so out loud before writing one |

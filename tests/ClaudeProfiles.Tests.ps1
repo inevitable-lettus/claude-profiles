@@ -195,13 +195,12 @@ Describe 'Registry lifecycle' {
     }
 
     It 'defaults the auth mode by platform, matching lib/platform.sh' {
-        # The asymmetry is the whole point: CLAUDE_CONFIG_DIR relocates
-        # .credentials.json on Windows and Linux and so isolates the login by
-        # itself, but on macOS credentials live in one shared Keychain item
-        # that it does not touch. Both implementations must agree, or a
-        # registry written by one is wrong for the other.
+        # config-dir on every platform: CLAUDE_CONFIG_DIR relocates
+        # .credentials.json on Windows and Linux, and keys the Keychain item on
+        # macOS. Both implementations must agree, or a registry written by one
+        # is wrong for the other.
         InModuleScope ClaudeProfiles {
-            $expected = if ($script:CpIsMacOS) { 'oauth-token' } else { 'config-dir' }
+            $expected = 'config-dir'
             Get-CpDefaultAuthMode | Should -Be $expected
         }
     }

@@ -306,10 +306,15 @@ test_registry() {
   cp_run add work --no-desktop --auth oauth-token --description 'agency "quoted"' >/dev/null
   cp_run add client-a --no-desktop --auth config-dir >/dev/null
   cp_run add solo --no-desktop --auth config-dir --config-dir "$FAKE_HOME/custom-dir" >/dev/null
+  local macadd; macadd="$(cp_run add macdefault --no-desktop)"
 
   local json; json="$(cp_out list --json)"
   assert_contains "profile appears in list --json" '"work"' "$json"
   assert_contains "second profile appears" '"client-a"' "$json"
+  # config-dir is the default on macOS too: current Claude Code keys its
+  # Keychain item to CLAUDE_CONFIG_DIR, so no token is needed.
+  assert_contains "macOS defaults to config-dir auth" "Log in once" "$macadd"
+  assert_not_contains "macOS does not ask for a token by default" "OAuth token" "$macadd"
   assert_contains "quotes in a description are escaped" '\"quoted\"' "$json"
   assert_contains "custom config dir is honoured" 'custom-dir' "$json"
 
@@ -600,8 +605,17 @@ test_doctor() {
   assert_not_contains "doctor does not print the token (human)" "sk-ant-oat-FAKE" "$human"
   assert_not_contains "doctor does not print the token (json)" "sk-ant-oat-FAKE" "$json"
 
-  # On macOS, config-dir auth cannot isolate the login. doctor must say so.
-  assert_contains "doctor flags config-dir auth on macOS" "does NOT separate the login" "$human"
+  # On macOS, config-dir auth isolates the login through a Keychain item named
+  # after the config dir. Before a login doctor warns; once the item exists
+  # (metadata lookup only) it reports the profile as logged in.
+  assert_not_contains "doctor no longer fails config-dir auth on macOS" "does NOT separate the login" "$human"
+  assert_contains "doctor warns before a macOS login" "[client-a] no Keychain login found yet" "$human"
+  local svc
+  svc="Claude Code-credentials-$(printf '%s' "$FAKE_HOME/.claude-client-a" | shasum -a 256 | cut -c1-8)"
+  HOME="$FAKE_HOME" security add-generic-password -s "$svc" -a "$USER" -w "blob"
+  human="$(cp_run doctor)"
+  assert_contains "doctor finds the per-config-dir Keychain item" "[client-a] logged in — Keychain item \"$svc\"" "$human"
+  assert_not_contains "doctor never prints the Keychain secret" "blob" "$human"
 }
 
 

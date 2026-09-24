@@ -27,9 +27,34 @@ if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
   C_GREEN=$'\033[32m'
   C_YELLOW=$'\033[33m'
   C_BLUE=$'\033[34m'
+  # One accent, used for headings and the active profile. Truecolor where the
+  # terminal says it has it, the nearest 256-colour cell otherwise.
+  case "${COLORTERM:-}" in
+    truecolor|24bit) C_ACCENT=$'\033[38;2;217;119;87m' ;;
+    *)               C_ACCENT=$'\033[38;5;173m' ;;
+  esac
 else
-  C_RESET="" C_BOLD="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW="" C_BLUE=""
+  C_RESET="" C_BOLD="" C_DIM="" C_RED="" C_GREEN="" C_YELLOW="" C_BLUE="" C_ACCENT=""
 fi
+
+# Status glyphs. UTF-8 when the locale can render it, plain ASCII otherwise,
+# so a C-locale CI log or a Windows console still lines up.
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+  *UTF-8*|*utf-8*|*UTF8*|*utf8*)
+    G_OK="✓" G_WARN="!" G_FAIL="✗" G_INFO="·" G_HEAD="▍" G_ON="●" G_OFF="○" ;;
+  *)
+    G_OK="+" G_WARN="!" G_FAIL="x" G_INFO="-" G_HEAD="#" G_ON="*" G_OFF="-" ;;
+esac
+
+# tilde <text> — $HOME spelled as ~ for human output. Paths are long enough
+# already; the home prefix is the least informative part of every one.
+tilde() {
+  # The replacement comes from a variable: a literal ~ there is tilde-expanded
+  # back into $HOME by bash 4.3+, and a quoted one keeps its backslash on 3.2.
+  local s="$1" t='~'
+  if [ -n "${HOME:-}" ] && [ "$HOME" != "/" ]; then s="${s//"$HOME"/$t}"; fi
+  printf '%s' "$s"
+}
 
 # say    — normal progress message
 # ok     — something succeeded / a check passed
@@ -40,14 +65,13 @@ fi
 # header — section divider
 
 say()    { printf '%s\n' "$*" >&2; }
-ok()     { printf '%s  OK  %s %s\n' "$C_GREEN"  "$C_RESET" "$*" >&2; }
-warn()   { printf '%s WARN %s %s\n' "$C_YELLOW" "$C_RESET" "$*" >&2; }
-fail()   { printf '%s FAIL %s %s\n' "$C_RED"    "$C_RESET" "$*" >&2; }
-info()   { printf '%s INFO %s %s\n' "$C_BLUE"   "$C_RESET" "$*" >&2; }
-die()    { printf '%s FATAL%s %s\n' "$C_RED"    "$C_RESET" "$*" >&2; exit 1; }
+ok()     { printf '  %s%s%s %s\n' "$C_GREEN"  "$G_OK"   "$C_RESET" "$(tilde "$*")" >&2; }
+warn()   { printf '  %s%s%s %s\n' "$C_YELLOW" "$G_WARN" "$C_RESET" "$(tilde "$*")" >&2; }
+fail()   { printf '  %s%s%s %s\n' "$C_RED"    "$G_FAIL" "$C_RESET" "$(tilde "$*")" >&2; }
+info()   { printf '  %s%s %s%s\n' "$C_DIM"    "$G_INFO" "$(tilde "$*")" "$C_RESET" >&2; }
+die()    { printf '%s%s error:%s %s\n' "$C_RED" "$G_FAIL" "$C_RESET" "$(tilde "$*")" >&2; exit 1; }
 
-header() { printf '\n%s=== %s ===%s\n' "$C_BOLD" "$*" "$C_RESET" >&2; }
-
+header() { printf '\n%s%s%s %s%s%s\n' "$C_ACCENT" "$G_HEAD" "$C_RESET" "$C_BOLD" "$*" "$C_RESET" >&2; }
 
 # confirm <prompt>
 #

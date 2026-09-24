@@ -128,15 +128,39 @@ platform_apps_home() {
 # Defaults for a newly added profile
 # ---------------------------------------------------------------------------
 
-# platform_default_auth_mode — see the header of this file.
+# platform_default_auth_mode — config-dir on every platform.
 #
-#   config-dir    CLAUDE_CONFIG_DIR alone isolates the login  (Linux, Windows)
-#   oauth-token   plus CLAUDE_CODE_OAUTH_TOKEN                (macOS)
-platform_default_auth_mode() {
-  case "$(platform_id)" in
-    macos) printf 'oauth-token' ;;
-    *)     printf 'config-dir' ;;
-  esac
+# On Linux and Windows CLAUDE_CONFIG_DIR relocates .credentials.json. On macOS
+# current Claude Code keys its Keychain item to the config directory instead
+# (see platform_macos_keychain_service), so the variable isolates the login
+# there too. oauth-token remains available for CI and headless machines, and
+# for Claude Code builds old enough to use a single fixed Keychain item.
+platform_default_auth_mode() { printf 'config-dir'; }
+
+# platform_macos_keychain_service <config-dir>
+#
+# The Keychain service name Claude Code uses for a login made under that
+# CLAUDE_CONFIG_DIR: "Claude Code-credentials-" plus the first 8 hex digits
+# of sha256 of the directory string exactly as exported. The primary account
+# (no CLAUDE_CONFIG_DIR) uses the bare "Claude Code-credentials".
+#
+# Read from Claude Code 2.1.260's own source: sha256 over the NFC-normalised
+# CLAUDE_CONFIG_DIR string, verbatim (no realpath, no trailing-slash trim).
+# The directories this tool exports are ASCII in practice, where NFC is a
+# no-op. CLAUDE_SECURESTORAGE_CONFIG_DIR, if set, overrides the input.
+#
+# It is still behaviour rather than a documented contract, so every caller
+# treats a miss as "not logged in yet or naming changed" — a warning, never a
+# failure. Prints nothing if no sha256 tool is available.
+platform_macos_keychain_service() {
+  local dir="$1" hash=""
+  if have shasum; then
+    hash="$(printf '%s' "$dir" | shasum -a 256 2>/dev/null | cut -c1-8)"
+  elif have sha256sum; then
+    hash="$(printf '%s' "$dir" | sha256sum 2>/dev/null | cut -c1-8)"
+  fi
+  [ -n "$hash" ] || return 1
+  printf 'Claude Code-credentials-%s' "$hash"
 }
 
 # platform_default_cli_config_dir <profile>

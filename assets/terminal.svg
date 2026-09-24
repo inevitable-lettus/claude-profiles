@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" xml:space="preserve" width="880" height="468" viewBox="0 0 880 468" role="img" aria-labelledby="t d">
+  <title id="t">claude-profiles in a terminal</title>
+  <desc id="d">claude-profiles list shows the primary account and a work profile. Changing into a project with a .claude-profile file switches the shell to the work profile, and doctor reports the login as healthy.</desc>
+  <style>
+    text { white-space: pre; font-family: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 15px; fill: #d8d3cb; }
+    .dim { fill: #77716a; } .mut { fill: #a9a39a; } .hi { fill: #f3efe8; }
+    .acc { fill: #d97757; } .ok { fill: #8dbb86; } .b { font-weight: 700; }
+    .l { opacity: 0; animation: in .35s ease-out forwards; }
+    @keyframes in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+    @media (prefers-reduced-motion: reduce) { .l { animation: none; opacity: 1; } }
+  </style>
+  <rect width="880" height="468" rx="14" fill="#141312"/>
+  <rect x=".5" y=".5" width="879" height="467" rx="13.5" fill="none" stroke="#fff" stroke-opacity=".09"/>
+  <circle cx="24" cy="22" r="6" fill="#3a3733"/><circle cx="44" cy="22" r="6" fill="#3a3733"/><circle cx="64" cy="22" r="6" fill="#3a3733"/>
+  <text x="440" y="27" text-anchor="middle" class="dim" style="font-size:13px">zsh — ~/code</text>
+
+  <g class="l" style="animation-delay:.2s"><text x="28" y="72"><tspan class="dim">~/code/side-project</tspan> <tspan class="mut">$</tspan> <tspan class="hi">claude-profiles list</tspan></text></g>
+  <g class="l" style="animation-delay:.6s"><text x="28" y="104"><tspan class="acc">  ●</tspan> <tspan class="hi b">primary</tspan>  ~/.claude             <tspan class="dim">default        your normal login</tspan></text></g>
+  <g class="l" style="animation-delay:.7s"><text x="28" y="126"><tspan class="dim">  ○</tspan> <tspan class="hi b">work   </tspan>  ~/.claude-work        <tspan class="dim">cli, desktop   Agency account</tspan></text></g>
+
+  <g class="l" style="animation-delay:1.3s"><text x="28" y="170"><tspan class="dim">~/code/side-project</tspan> <tspan class="mut">$</tspan> <tspan class="hi">cd ../agency-saas</tspan></text></g>
+  <g class="l" style="animation-delay:1.9s"><text x="28" y="196"><tspan class="acc">(work)</tspan> <tspan class="dim">~/code/agency-saas</tspan> <tspan class="mut">$</tspan> <tspan class="hi">claude-profiles doctor work</tspan></text></g>
+
+  <g class="l" style="animation-delay:2.4s"><text x="28" y="232"><tspan class="acc">▍</tspan> <tspan class="hi b">Credential precedence</tspan></text></g>
+  <g class="l" style="animation-delay:2.5s"><text x="28" y="256"><tspan class="ok">  ✓</tspan> Nothing in the environment outranks a profile credential</text></g>
+  <g class="l" style="animation-delay:2.8s"><text x="28" y="292"><tspan class="acc">▍</tspan> <tspan class="hi b">Profiles</tspan></text></g>
+  <g class="l" style="animation-delay:2.9s"><text x="28" y="316"><tspan class="ok">  ✓</tspan> [work] config dir exists: ~/.claude-work</text></g>
+  <g class="l" style="animation-delay:3.0s"><text x="28" y="340"><tspan class="ok">  ✓</tspan> [work] logged in — Keychain item "Claude Code-credentials-3f9a21c0"</text></g>
+  <g class="l" style="animation-delay:3.3s"><text x="28" y="376"><tspan class="acc">▍</tspan> <tspan class="hi b">Summary</tspan></text></g>
+  <g class="l" style="animation-delay:3.4s"><text x="28" y="400"><tspan class="ok">  ✓</tspan> All 9 checks passed</text></g>
+
+  <g class="l" style="animation-delay:3.9s"><text x="28" y="436"><tspan class="acc">(work)</tspan> <tspan class="dim">~/code/agency-saas</tspan> <tspan class="mut">$</tspan> <tspan class="hi">▌</tspan></text></g>
+</svg>

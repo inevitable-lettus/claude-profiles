@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claude-profiles</title>
+<meta name="description" content="Run several Claude accounts on one machine. Claude Code and the desktop app each get an isolated profile, and the account switches when you cd into a project. macOS, Linux and Windows. Open source.">
+<meta property="og:title" content="claude-profiles">
+<meta property="og:description" content="Several Claude accounts on one machine. The right one, every time you cd.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://inevitable-lettus.github.io/claude-profiles/">
+<meta property="og:image" content="https://inevitable-lettus.github.io/claude-profiles/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#121110">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23121110'/%3E%3Ccircle cx='25' cy='32' r='12' fill='none' stroke='%23d97757' stroke-width='4.5'/%3E%3Ccircle cx='39' cy='32' r='12' fill='none' stroke='%23eeeae3' stroke-width='4.5'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #121110;
+    --bg-raise: #1a1917;
+    --bg-sunk: #0d0c0b;
+    --line: rgba(255, 248, 238, .08);
+    --line-strong: rgba(255, 248, 238, .14);
+    --text: #f3efe8;
+    --text-2: #b3ada4;
+    --text-3: #7a746c;
+    --accent: #d97757;
+    --accent-soft: rgba(217, 119, 87, .14);
+    --ok: #8dbb86;
+    --sans: "Geist", ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --serif: "Instrument Serif", ui-serif, Georgia, serif;
+    --r-lg: 18px; --r-md: 12px; --r-sm: 8px;
+    --ease: cubic-bezier(.2, .8, .2, 1);
+    --z-grain: 1; --z-nav: 10; --z-skip: 20;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  html { scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 400 17px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: var(--z-grain); opacity: .05;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  a { color: inherit; }
+  code, kbd, pre { font-family: var(--mono); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+  ::selection { background: var(--accent); color: var(--bg); }
+
+  .skip { position: absolute; left: 16px; top: -60px; z-index: var(--z-skip); background: var(--text); color: var(--bg); padding: 10px 14px; border-radius: var(--r-sm); text-decoration: none; font-weight: 500; }
+  .skip:focus { top: 12px; }
+
+  .wrap { width: 100%; max-width: 1180px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- nav ---------- */
+  nav {
+    position: sticky; top: 0; z-index: var(--z-nav);
+    backdrop-filter: saturate(140%) blur(14px); -webkit-backdrop-filter: saturate(140%) blur(14px);
+    background: rgba(18, 17, 16, .72); border-bottom: 1px solid var(--line);
+  }
+  nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 600; letter-spacing: -.02em; }
+  .brand svg { width: 26px; height: 26px; }
+  .nav-links { display: flex; gap: 22px; margin-left: auto; font-size: 14.5px; }
+  .nav-links a { text-decoration: none; color: var(--text-2); transition: color .2s var(--ease); }
+  .nav-links a:hover { color: var(--text); }
+  .gh {
+    display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: var(--r-sm);
+    border: 1px solid var(--line-strong); text-decoration: none; font-size: 14px; font-weight: 500;
+    transition: background .2s var(--ease), border-color .2s var(--ease), transform .15s var(--ease);
+  }
+  .gh:hover { background: rgba(255, 248, 238, .05); border-color: rgba(255, 248, 238, .24); }
+  .gh:active { transform: translateY(1px); }
+  .gh svg { width: 16px; height: 16px; }
+
+  /* ---------- hero ---------- */
+  .hero { position: relative; padding: 88px 0 104px; }
+  .hero::before {
+    content: ""; position: absolute; inset: -120px 0 auto; height: 720px; pointer-events: none;
+    background:
+      radial-gradient(560px 380px at 78% 30%, rgba(217, 119, 87, .20), transparent 70%),
+      radial-gradient(420px 300px at 12% 0%, rgba(255, 240, 220, .05), transparent 70%);
+  }
+  .hero .wrap { position: relative; display: grid; grid-template-columns: minmax(0, 1.02fr) minmax(0, 1fr); gap: 64px; align-items: center; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 10px; font: 500 13px/1 var(--mono); color: var(--text-2);
+    letter-spacing: .02em; margin-bottom: 28px;
+  }
+  .eyebrow b { color: var(--accent); font-weight: 500; }
+  .eyebrow i { width: 4px; height: 4px; border-radius: 50%; background: var(--text-3); }
+  h1 {
+    font-size: clamp(44px, 6.4vw, 78px); line-height: .98; letter-spacing: -.045em; font-weight: 600;
+    margin: 0 0 26px; text-wrap: balance;
+  }
+  h1 em, h2 em { font-family: var(--serif); font-style: italic; font-weight: 400; letter-spacing: -.02em; color: var(--accent); }
+  .lede { font-size: 19px; color: var(--text-2); max-width: 34em; margin: 0 0 36px; text-wrap: pretty; }
+  .lede code { color: var(--text); font-size: .92em; }
+
+  .install { max-width: 560px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .tab {
+    appearance: none; border: 0; background: none; color: var(--text-3); cursor: pointer;
+    font: 500 13px/1 var(--mono); padding: 8px 10px; border-radius: 6px;
+    transition: color .2s var(--ease), background .2s var(--ease);
+  }
+  .tab:hover { color: var(--text-2); }
+  .tab[aria-selected="true"] { color: var(--text); background: rgba(255, 248, 238, .06); }
+  .cmd {
+    display: flex; align-items: center; gap: 12px; padding: 6px 6px 6px 18px;
+    background: var(--bg-sunk); border: 1px solid var(--line-strong); border-radius: var(--r-md);
+    box-shadow: 0 1px 0 rgba(255, 248, 238, .04) inset, 0 18px 40px -20px rgba(0, 0, 0, .8);
+  }
+  .cmd pre { margin: 0; flex: 1; overflow-x: auto; font-size: 14px; line-height: 1.5; padding: 10px 0; color: var(--text); scrollbar-width: none; }
+  .cmd pre::-webkit-scrollbar { display: none; }
+  .cmd pre .p { color: var(--text-3); user-select: none; }
+  .copy {
+    flex: none; appearance: none; cursor: pointer; border: 1px solid var(--line-strong); background: var(--bg-raise);
+    color: var(--text); font: 500 13px/1 var(--sans); padding: 10px 14px; border-radius: var(--r-sm); min-width: 76px;
+    transition: background .2s var(--ease), transform .15s var(--ease), border-color .2s var(--ease);
+  }
+  .copy:hover { background: #22201e; border-color: rgba(255, 248, 238, .22); }
+  .copy:active { transform: scale(.97); }
+  .copy.done { color: var(--ok); }
+  .install-note { margin: 14px 2px 0; font-size: 14px; color: var(--text-3); }
+  .install-note a { color: var(--text-2); text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+
+  /* ---------- terminal ---------- */
+  .term {
+    position: relative; border-radius: var(--r-lg); background: #0f0e0d; border: 1px solid var(--line-strong);
+    box-shadow: 0 40px 80px -30px rgba(0, 0, 0, .9), 0 0 0 6px rgba(255, 248, 238, .02);
+    font: 400 14px/1.75 var(--mono); overflow: hidden;
+  }
+  .term-bar { display: flex; align-items: center; gap: 8px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+  .term-bar span { width: 11px; height: 11px; border-radius: 50%; background: #34312d; }
+  .term-bar small { margin: 0 auto; transform: translateX(-20px); color: var(--text-3); font-size: 12px; }
+  .term-body { padding: 20px 22px 24px; min-height: 356px; white-space: pre; overflow-x: auto; color: #d8d3cb; }
+  .t-dim { color: var(--text-3); } .t-mut { color: var(--text-2); } .t-hi { color: var(--text); }
+  .t-acc { color: var(--accent); } .t-ok { color: var(--ok); } .t-b { font-weight: 500; color: var(--text); }
+  .caret { display: inline-block; width: 8px; height: 17px; vertical-align: -3px; background: var(--text); animation: blink 1.1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ---------- sections ---------- */
+  section { padding: 112px 0; border-top: 1px solid var(--line); }
+  .kicker { font: 500 13px/1 var(--mono); color: var(--accent); margin: 0 0 18px; }
+  h2 { font-size: clamp(32px, 4.2vw, 50px); line-height: 1.04; letter-spacing: -.035em; font-weight: 600; margin: 0 0 20px; max-width: 16em; text-wrap: balance; }
+  .sub { color: var(--text-2); font-size: 18px; max-width: 36em; margin: 0; text-wrap: pretty; }
+
+  /* problem */
+  .problem .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 72px; align-items: start; }
+  .symptoms { list-style: none; margin: 8px 0 0; padding: 0; border-top: 1px solid var(--line); }
+  .symptoms li { display: grid; grid-template-columns: 40px 1fr; gap: 8px; padding: 22px 0; border-bottom: 1px solid var(--line); color: var(--text-2); }
+  .symptoms li b { display: block; color: var(--text); font-weight: 500; margin-bottom: 2px; }
+  .symptoms .n { font: 500 13px/1.9 var(--mono); color: var(--text-3); }
+
+  /* feature rows (zig-zag) */
+  .rows { display: grid; gap: 120px; margin-top: 80px; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 72px; align-items: center; }
+  .row:nth-child(even) .row-copy { order: 2; }
+  .row h3 { font-size: 28px; line-height: 1.15; letter-spacing: -.025em; font-weight: 600; margin: 0 0 14px; }
+  .row p { color: var(--text-2); margin: 0 0 16px; max-width: 30em; }
+  .row p code { color: var(--text); font-size: .9em; background: rgba(255, 248, 238, .05); padding: 2px 6px; border-radius: 5px; }
+  .ticks { list-style: none; padding: 0; margin: 22px 0 0; display: grid; gap: 10px; font-size: 15px; color: var(--text-2); }
+  .ticks li { display: flex; gap: 12px; }
+  .ticks li::before { content: ""; flex: none; width: 14px; height: 14px; margin-top: 5px; border-radius: 4px; background: var(--accent-soft); box-shadow: inset 0 0 0 1px rgba(217, 119, 87, .5); }
+
+  .panel {
+    position: relative; border-radius: var(--r-lg); background: var(--bg-raise); border: 1px solid var(--line);
+    padding: 26px; overflow: hidden; isolation: isolate;
+  }
+  .panel::before {
+    content: ""; position: absolute; inset: 0; z-index: -1; opacity: 0; transition: opacity .3s var(--ease);
+    background: radial-gradient(380px circle at var(--mx, 50%) var(--my, 50%), rgba(217, 119, 87, .12), transparent 60%);
+  }
+  .panel:hover::before { opacity: 1; }
+  .panel pre { margin: 0; font-size: 13.5px; line-height: 1.8; color: #d8d3cb; white-space: pre; overflow-x: auto; }
+  .file-tag { display: inline-block; font: 500 12px/1 var(--mono); color: var(--text-3); margin-bottom: 16px; }
+
+  .windows { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .win { border-radius: var(--r-md); background: var(--bg-sunk); border: 1px solid var(--line); padding: 14px; }
+  .win-top { display: flex; align-items: center; gap: 6px; margin-bottom: 16px; }
+  .win-top i { width: 8px; height: 8px; border-radius: 50%; background: #34312d; }
+  .win-top span { margin-left: auto; font: 500 11.5px/1 var(--mono); color: var(--text-3); }
+  .who { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+  .av { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; font: 600 13px/1 var(--sans); }
+  .av.a { background: #2b2926; color: var(--text); }
+  .av.b { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px rgba(217, 119, 87, .4); }
+  .who small { display: block; color: var(--text-3); font-size: 12px; line-height: 1.3; }
+  .who b { font-weight: 500; font-size: 14px; line-height: 1.3; }
+  .bar { height: 8px; border-radius: 4px; background: rgba(255, 248, 238, .06); margin-top: 8px; }
+  .bar.s { width: 62%; } .bar.m { width: 84%; }
+  .panel-foot { margin-top: 16px; font: 400 12.5px/1.6 var(--mono); color: var(--text-3); }
+  .panel-foot b { color: var(--text-2); font-weight: 400; }
+
+  /* safety */
+  .safety-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; margin-top: 64px; }
+  .s-item { grid-column: span 4; padding: 28px; border-radius: var(--r-lg); background: var(--bg-raise); border: 1px solid var(--line); }
+  .s-item.wide { grid-column: span 8; }
+  .s-item h3 { font-size: 18px; font-weight: 600; letter-spacing: -.015em; margin: 0 0 8px; }
+  .s-item p { margin: 0; color: var(--text-2); font-size: 15.5px; }
+  .s-item code { color: var(--text); font-size: .9em; }
+  .glyph { width: 28px; height: 28px; margin-bottom: 20px; color: var(--accent); }
+
+  /* compare */
+  .compare { margin-top: 56px; border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
+  .compare table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  .compare th, .compare td { text-align: left; padding: 16px 20px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .compare tr:last-child td { border-bottom: 0; }
+  .compare thead th { font: 500 12.5px/1.2 var(--mono); color: var(--text-3); background: var(--bg-sunk); }
+  .compare thead th.us { color: var(--accent); }
+  .compare td { color: var(--text-2); }
+  .compare td:first-child { color: var(--text); font-weight: 500; width: 30%; }
+  .compare td.us { color: var(--text); background: rgba(217, 119, 87, .05); }
+  .y { color: var(--ok); } .n { color: var(--text-3); }
+  .compare-scroll { overflow-x: auto; }
+
+  /* won't */
+  .wont .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 72px; align-items: start; }
+  .quote { font-family: var(--serif); font-size: clamp(28px, 3.2vw, 38px); line-height: 1.2; letter-spacing: -.01em; margin: 0; color: var(--text); text-wrap: balance; }
+  .wont p { color: var(--text-2); margin: 0 0 16px; }
+
+  /* start */
+  .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 56px; counter-reset: s; }
+  .step { position: relative; padding: 26px; border-radius: var(--r-lg); border: 1px solid var(--line); background: var(--bg-raise); display: flex; flex-direction: column; }
+  .step::before { counter-increment: s; content: "0" counter(s); font: 500 13px/1 var(--mono); color: var(--accent); margin-bottom: 18px; }
+  .step h3 { font-size: 18px; font-weight: 600; margin: 0 0 8px; letter-spacing: -.015em; }
+  .step p { color: var(--text-2); font-size: 15px; margin: 0 0 18px; }
+  .step pre { margin: auto 0 0; padding: 14px 16px; border-radius: var(--r-md); background: var(--bg-sunk); border: 1px solid var(--line); font-size: 13px; line-height: 1.7; overflow-x: auto; color: var(--text); }
+  .step pre .c { color: var(--text-3); }
+
+  /* footer */
+  footer { border-top: 1px solid var(--line); padding: 48px 0 64px; color: var(--text-3); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 20px 32px; align-items: center; }
+  footer nav { all: unset; display: flex; gap: 22px; flex-wrap: wrap; }
+  footer a { color: var(--text-2); text-decoration: none; transition: color .2s var(--ease); }
+  footer a:hover { color: var(--text); }
+  footer .disclaimer { flex-basis: 100%; max-width: 60em; }
+
+  /* reveal */
+  .rv { opacity: 0; transform: translateY(16px); transition: opacity .7s var(--ease), transform .7s var(--ease); transition-delay: var(--d, 0s); }
+  .rv.in { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .rv { opacity: 1; transform: none; transition: none; }
+    .caret { animation: none; }
+  }
+
+  /* ---------- responsive ---------- */
+  @media (max-width: 940px) {
+    .hero { padding: 56px 0 80px; }
+    .hero .wrap, .problem .wrap, .row, .wont .wrap { grid-template-columns: minmax(0, 1fr); gap: 48px; }
+    .row:nth-child(even) .row-copy { order: 0; }
+    .rows { gap: 88px; }
+    .s-item, .s-item.wide { grid-column: span 12; }
+    .steps { grid-template-columns: minmax(0, 1fr); }
+    section { padding: 88px 0; }
+  }
+  @media (max-width: 640px) {
+    .wrap { padding: 0 16px; }
+    .nav-links { display: none; }
+    .gh { margin-left: auto; }
+    .windows { grid-template-columns: 1fr; }
+    .term { font-size: 12.5px; }
+    .term-body { padding: 16px; min-height: 320px; }
+    .compare th, .compare td { padding: 14px; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<nav aria-label="Primary">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="claude-profiles home">
+      <svg viewBox="0 0 64 64" aria-hidden="true"><circle cx="25" cy="32" r="12" fill="none" stroke="#d97757" stroke-width="4.5"/><circle cx="39" cy="32" r="12" fill="none" stroke="#eeeae3" stroke-width="4.5"/></svg>
+      claude-profiles
+    </a>
+    <div class="nav-links">
+      <a href="#how">How it works</a>
+      <a href="#safety">Safety</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/inevitable-lettus/claude-profiles/tree/main/docs">Docs</a>
+    </div>
+    <a class="gh" href="https://github.com/inevitable-lettus/claude-profiles">
+      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      Star on GitHub
+    </a>
+  </div>
+</nav>
+
+<main id="main">
+  <header class="hero" id="top">
+    <div class="wrap">
+      <div>
+        <p class="eyebrow rv"><b>v1.0.0</b><i></i>Open source<i></i>MIT</p>
+        <h1 class="rv" style="--d:.05s">Every project on the <em>right</em> Claude account.</h1>
+        <p class="lede rv" style="--d:.1s">Personal Pro and an employer's Team seat on one laptop? claude-profiles gives each account its own isolated profile, for Claude Code and the desktop app, and switches when you <code>cd</code> into a project. macOS, Linux and Windows.</p>
+
+        <div class="install rv" style="--d:.15s">
+          <div class="tabs" role="tablist" aria-label="Platform">
+            <button class="tab" role="tab" aria-selected="true" aria-controls="cmd" data-cmd="curl -fsSL https://raw.githubusercontent.com/inevitable-lettus/claude-profiles/main/install.sh | sh">macOS / Linux</button>
+            <button class="tab" role="tab" aria-selected="false" aria-controls="cmd" data-cmd="irm https://raw.githubusercontent.com/inevitable-lettus/claude-profiles/main/install.ps1 | iex">Windows</button>
+          </div>
+          <div class="cmd" id="cmd" role="tabpanel">
+            <pre><span class="p">$ </span><span id="cmd-text">curl -fsSL https://raw.githubusercontent.com/inevitable-lettus/claude-profiles/main/install.sh | sh</span></pre>
+            <button class="copy" type="button" id="copy" aria-live="polite">Copy</button>
+          </div>
+          <p class="install-note">Installs the latest release into your home directory. Never edits your shell rc, never needs sudo. <a href="https://github.com/inevitable-lettus/claude-profiles/blob/main/install.sh">Read the script first</a>.</p>
+        </div>
+      </div>
+
+      <div class="term rv" style="--d:.2s" aria-label="Terminal demonstration: changing into a project switches the shell to the work profile">
+        <div class="term-bar"><span></span><span></span><span></span><small>zsh — ~/code</small></div>
+        <div class="term-body" id="term" aria-hidden="true"></div>
+      </div>
+    </div>
+  </header>
+
+  <section class="problem" aria-labelledby="problem-h">
+    <div class="wrap">
+      <div class="rv">
+        <p class="kicker">The problem</p>
+        <h2 id="problem-h">Wrong account. <em>Again.</em></h2>
+        <p class="sub">Claude Code has one login per machine. If you have two accounts, you are one forgotten <code>/logout</code> away from putting client work on your personal plan.</p>
+      </div>
+      <ol class="symptoms rv" style="--d:.1s">
+        <li><span class="n">01</span><span><b>Log out, log in, repeat.</b>Every context switch costs a browser round-trip, and the desktop app only holds one account at a time.</span></li>
+        <li><span class="n">02</span><span><b>History and settings bleed together.</b>Sessions, MCP servers and project memory from one employer sit next to another's.</span></li>
+        <li><span class="n">03</span><span><b>Aliases are easy to forget.</b>A <code>claude-work</code> alias works until the one time you type plain <code>claude</code> in the wrong repo.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="how" aria-labelledby="how-h">
+    <div class="wrap">
+      <div class="rv">
+        <p class="kicker">How it works</p>
+        <h2 id="how-h">Set it once per project. Stop thinking about it.</h2>
+        <p class="sub">A small, readable bash and PowerShell tool built on Claude's own environment variables and one Electron flag. No daemon, no binary, no proxy.</p>
+      </div>
+
+      <div class="rows">
+        <div class="row">
+          <div class="row-copy rv">
+            <h3>Switches when you <code style="font-size:.85em">cd</code></h3>
+            <p>Run <code>claude-profiles use work</code> once in a repo. It writes a one-line <code>.claude-profile</code>, and a shell hook picks the account every time you enter that tree.</p>
+            <ul class="ticks">
+              <li>Plain <code>claude</code> just works: no prefix to remember</li>
+              <li>Pure-shell lookup, so directories without the file start no processes</li>
+              <li>zsh, bash and PowerShell, with a prompt indicator for starship and oh-my-posh</li>
+            </ul>
+          </div>
+          <div class="panel rv" style="--d:.1s">
+            <span class="file-tag">~/code/agency-saas/.claude-profile</span>
+<pre><span class="t-hi">work</span>
+
+<span class="t-dim">~/code/side-project</span> <span class="t-mut">$</span> <span class="t-hi">cd ../agency-saas</span>
+<span class="t-acc">(work)</span> <span class="t-dim">~/code/agency-saas</span> <span class="t-mut">$</span> <span class="t-hi">claude</span>
+<span class="t-dim">  # CLAUDE_CONFIG_DIR=~/.claude-work</span>
+
+<span class="t-acc">(work)</span> <span class="t-dim">~/code/agency-saas</span> <span class="t-mut">$</span> <span class="t-hi">cd ~/code/side-project</span>
+<span class="t-dim">~/code/side-project</span> <span class="t-mut">$</span>  <span class="t-dim"># primary again, automatically</span></pre>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="row-copy rv">
+            <h3>Two desktop apps, side by side</h3>
+            <p>Each profile launches the Claude desktop app against its own data directory, with its own login, MCP servers and window state. Add a clickable launcher to the Dock, Start menu or app grid.</p>
+            <ul class="ticks">
+              <li>Per-profile MCP config, so two instances never fight over a port</li>
+              <li>Handles Windows MSIX / Store installs, which reject launch arguments</li>
+              <li>Your primary <code>~/.claude</code> is never touched</li>
+            </ul>
+          </div>
+          <div class="panel rv" style="--d:.1s">
+            <div class="windows">
+              <div class="win">
+                <div class="win-top"><i></i><i></i><i></i><span>Claude</span></div>
+                <div class="who"><div class="av a">P</div><div><b>Personal</b><small>Pro plan</small></div></div>
+                <div class="bar m"></div><div class="bar s"></div><div class="bar m"></div>
+              </div>
+              <div class="win">
+                <div class="win-top"><i></i><i></i><i></i><span>Claude · work</span></div>
+                <div class="who"><div class="av b">W</div><div><b>Agency</b><small>Team plan</small></div></div>
+                <div class="bar s"></div><div class="bar m"></div><div class="bar s"></div>
+              </div>
+            </div>
+            <p class="panel-foot"><b>$ claude-profiles desktop work</b><br>  · Launching Claude for profile 'work'</p>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="row-copy rv">
+            <h3>A doctor for when Claude updates</h3>
+            <p>This drives documented variables, not a supported API, so an update can move things. <code>claude-profiles doctor</code> answers "what changed?" in one command, with <code>--json</code> for CI.</p>
+            <ul class="ticks">
+              <li>Finds credentials that silently outrank a profile, like a stray <code>ANTHROPIC_API_KEY</code></li>
+              <li>Flags MCP port collisions between profiles before you hit them</li>
+              <li>Reads Keychain metadata only. It never prints or prompts for a secret</li>
+            </ul>
+          </div>
+          <div class="panel rv" style="--d:.1s">
+<pre><span class="t-mut">$</span> <span class="t-hi">claude-profiles doctor</span>
+
+<span class="t-acc">▍</span> <span class="t-b">Credential precedence</span>
+  <span class="t-ok">✓</span> Nothing in the environment outranks a profile credential
+  <span class="t-acc">!</span> apiKeyHelper is configured in ~/.claude/settings.json (rank 4)
+
+<span class="t-acc">▍</span> <span class="t-b">Profiles</span>
+  <span class="t-ok">✓</span> [work] logged in — Keychain item "Claude Code-cre…"
+  <span class="t-ok">✓</span> [work] user-data dir exists: ~/Library/…/Claude-Work
+
+<span class="t-acc">▍</span> <span class="t-b">MCP configuration</span>
+  <span class="t-acc">!</span> Fixed port 3845 is used by more than one profile</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="safety" aria-labelledby="safety-h">
+    <div class="wrap">
+      <div class="rv">
+        <p class="kicker">Safety</p>
+        <h2 id="safety-h">Written for a tool that touches your <em>credentials</em>.</h2>
+        <p class="sub">You can read every line it runs. That is why it is bash and PowerShell, not a compiled binary.</p>
+      </div>
+      <div class="safety-grid">
+        <div class="s-item wide rv">
+          <svg class="glyph" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M14 3 5 6.5v6.8c0 5.3 3.7 9.6 9 11.2 5.3-1.6 9-5.9 9-11.2V6.5L14 3Z"/><path d="M10.5 12.5h7M10.5 16h4.5"/></svg>
+          <h3>Cloned repos are treated as hostile</h3>
+          <p>A <code>.claude-profile</code> can only name a profile you already registered. It cannot create one, point at a directory, pass a flag or trigger a login. Unknown names warn and leave you on your primary account; they never fall through to a different one.</p>
+        </div>
+        <div class="s-item rv" style="--d:.05s">
+          <svg class="glyph" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><rect x="4" y="6" width="20" height="16" rx="3"/><path d="M9 12l3 2.5L9 17M14.5 17H19"/></svg>
+          <h3>Nothing edits your shell</h3>
+          <p>The installer prints the one line to add. You paste it.</p>
+        </div>
+        <div class="s-item rv">
+          <svg class="glyph" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="11" cy="14" r="5"/><path d="M16 14h8M21 14v4M24 14v3"/></svg>
+          <h3>Secrets stay put</h3>
+          <p>Keychain, DPAPI or libsecret. Health checks read metadata only.</p>
+        </div>
+        <div class="s-item rv" style="--d:.05s">
+          <svg class="glyph" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 8h16M6 14h16M6 20h10"/></svg>
+          <h3>Owner-only files</h3>
+          <p>Registry mode 600, state 700. ACLs stripped to you on Windows.</p>
+        </div>
+        <div class="s-item rv" style="--d:.1s">
+          <svg class="glyph" viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M7 7l14 14M21 7 7 21"/></svg>
+          <h3>Deletes ask first</h3>
+          <p>Every destructive prompt answers no on a closed stdin, so CI never removes data.</p>
+        </div>
+      </div>
+
+      <div class="compare rv">
+        <div class="compare-scroll">
+          <table>
+            <thead><tr><th scope="col">What you need</th><th scope="col">Log out / log in</th><th scope="col">Shell aliases</th><th scope="col" class="us">claude-profiles</th></tr></thead>
+            <tbody>
+              <tr><td>Both accounts signed in at once</td><td><span class="n">No</span></td><td><span class="y">Yes</span></td><td class="us"><span class="y">Yes</span></td></tr>
+              <tr><td>Right account without remembering</td><td><span class="n">No</span></td><td><span class="n">No</span></td><td class="us"><span class="y">Yes</span>, per directory</td></tr>
+              <tr><td>Desktop app, two accounts</td><td><span class="n">No</span></td><td><span class="n">Rarely</span></td><td class="us"><span class="y">Yes</span>, with launchers</td></tr>
+              <tr><td>Knows when an update broke it</td><td><span class="n">—</span></td><td><span class="n">No</span></td><td class="us"><span class="y">doctor</span></td></tr>
+              <tr><td>Same commands on every OS</td><td><span class="y">Yes</span></td><td><span class="n">No</span></td><td class="us"><span class="y">Yes</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="wont" aria-labelledby="wont-h">
+    <div class="wrap">
+      <div class="rv">
+        <p class="kicker">What it will not do</p>
+        <h2 id="wont-h" class="quote">Two accounts for two jobs is ordinary. Rotating accounts to dodge limits is not.</h2>
+      </div>
+      <div class="rv" style="--d:.1s">
+        <p>Some account switchers fail over to another account when you hit a rate limit. That is the kind of behaviour Anthropic's usage policy covers, and it puts every account involved at risk.</p>
+        <p>claude-profiles has no scheduling, no automatic failover and no way to switch on a rate-limit error. It exists for separate contexts: a personal account and an employer's, or two clients who should never share history.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="start" aria-labelledby="start-h">
+    <div class="wrap">
+      <div class="rv">
+        <p class="kicker">Get started</p>
+        <h2 id="start-h">Three commands. About two minutes.</h2>
+      </div>
+      <div class="steps">
+        <div class="step rv">
+          <h3>Install</h3>
+          <p>Latest release into <code>~/.claude-profiles</code>, linked into <code>~/.local/bin</code>.</p>
+<pre>curl -fsSL https://raw.githubusercontent.com/inevitable-lettus/claude-profiles/main/install.sh | sh</pre>
+        </div>
+        <div class="step rv" style="--d:.06s">
+          <h3>Hook your shell</h3>
+          <p>Add one line to <code>~/.zshrc</code>, <code>~/.bashrc</code> or your PowerShell profile.</p>
+<pre>eval "$(claude-profiles shell-init zsh)"</pre>
+        </div>
+        <div class="step rv" style="--d:.12s">
+          <h3>Add a profile, log in</h3>
+          <p>Your existing login stays your primary account.</p>
+<pre>claude-profiles init
+claude-profiles add work
+claude-profiles run work -- /login
+<span class="c"># then, in a repo:</span>
+claude-profiles use work</pre>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Back to top">
+      <svg viewBox="0 0 64 64" aria-hidden="true" width="22" height="22"><circle cx="25" cy="32" r="12" fill="none" stroke="#d97757" stroke-width="4.5"/><circle cx="39" cy="32" r="12" fill="none" stroke="#eeeae3" stroke-width="4.5"/></svg>
+      claude-profiles
+    </a>
+    <nav aria-label="Footer">
+      <a href="https://github.com/inevitable-lettus/claude-profiles">GitHub</a>
+      <a href="https://github.com/inevitable-lettus/claude-profiles/releases">Releases</a>
+      <a href="https://github.com/inevitable-lettus/claude-profiles/blob/main/CHANGELOG.md">Changelog</a>
+      <a href="https://github.com/inevitable-lettus/claude-profiles/blob/main/SECURITY.md">Security</a>
+      <a href="https://github.com/inevitable-lettus/claude-profiles/blob/main/LICENSE">MIT licence</a>
+    </nav>
+    <p class="disclaimer">Not affiliated with or endorsed by Anthropic. Claude is a trademark of Anthropic, PBC. This project drives documented environment variables and an Electron command-line flag; none of it is a supported API.</p>
+  </div>
+</footer>
+
+<script>
+(() => {
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Reveal on scroll.
+  const els = document.querySelectorAll('.rv');
+  if (reduce || !('IntersectionObserver' in window)) {
+    els.forEach(e => e.classList.add('in'));
+  } else {
+    const io = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+    }, { rootMargin: '0px 0px -8% 0px' });
+    els.forEach(e => io.observe(e));
+  }
+
+  // Spotlight on panels.
+  document.querySelectorAll('.panel').forEach(p => {
+    p.addEventListener('pointermove', ev => {
+      const r = p.getBoundingClientRect();
+      p.style.setProperty('--mx', (ev.clientX - r.left) + 'px');
+      p.style.setProperty('--my', (ev.clientY - r.top) + 'px');
+    });
+  });
+
+  // Install tabs + copy.
+  const text = document.getElementById('cmd-text');
+  const copy = document.getElementById('copy');
+  const tabs = [...document.querySelectorAll('.tab')];
+  tabs.forEach(t => t.addEventListener('click', () => {
+    tabs.forEach(o => o.setAttribute('aria-selected', String(o === t)));
+    text.textContent = t.dataset.cmd;
+    copy.textContent = 'Copy'; copy.classList.remove('done');
+  }));
+  if (/Win/.test(navigator.platform || '')) tabs[1].click();
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(text.textContent);
+      copy.textContent = 'Copied'; copy.classList.add('done');
+    } catch {
+      const range = document.createRange(); range.selectNodeContents(text);
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      copy.textContent = 'Select';
+    }
+    setTimeout(() => { copy.textContent = 'Copy'; copy.classList.remove('done'); }, 1800);
+  });
+
+  // Terminal demo.
+  const term = document.getElementById('term');
+  const P = (dir, prof) => (prof ? `<span class="t-acc">(${prof})</span> ` : '') + `<span class="t-dim">${dir}</span> <span class="t-mut">$</span> `;
+  const script = [
+    { p: P('~/code/side-project'), cmd: 'claude-profiles list' },
+    { out: '<span class="t-acc">  ●</span> <span class="t-b">primary</span>  ~/.claude          <span class="t-dim">default</span>' },
+    { out: '<span class="t-dim">  ○</span> <span class="t-b">work</span>     ~/.claude-work     <span class="t-dim">cli, desktop</span>', gap: 1 },
+    { p: P('~/code/side-project'), cmd: 'cd ../agency-saas' },
+    { p: P('~/code/agency-saas', 'work'), cmd: 'claude-profiles whoami' },
+    { out: 'Profile:     <span class="t-hi">work</span>' },
+    { out: 'Config dir:  ~/.claude-work' },
+    { out: '<span class="t-dim">Set by:      .claude-profile in this directory tree</span>', gap: 1 },
+    { p: P('~/code/agency-saas', 'work'), cmd: 'cd ~/code/side-project' },
+    { p: P('~/code/side-project'), cmd: '', end: true },
+  ];
+  const html = [];
+  const render = (tail = '') => { term.innerHTML = html.join('\n') + (html.length ? '\n' : '') + tail; };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  const staticRender = () => {
+    script.forEach(s => {
+      if (s.out !== undefined) html.push(s.out + (s.gap ? '\n' : ''));
+      else html.push(s.p + `<span class="t-hi">${s.cmd}</span>`);
+    });
+    html[html.length - 1] += '<span class="caret"></span>';
+    render();
+  };
+  if (reduce) { staticRender(); return; }
+
+  (async function run() {
+    while (true) {
+      html.length = 0; render('<span class="caret"></span>');
+      await sleep(700);
+      for (const s of script) {
+        if (s.out !== undefined) {
+          await sleep(90); html.push(s.out + (s.gap ? '\n' : '')); render(); continue;
+        }
+        let typed = '';
+        for (const ch of s.cmd) {
+          typed += ch; render(s.p + `<span class="t-hi">${typed}</span><span class="caret"></span>`);
+          await sleep(38 + Math.random() * 46);
+        }
+        if (s.end) { render(s.p + '<span class="caret"></span>'); await sleep(3600); break; }
+        await sleep(320);
+        html.push(s.p + `<span class="t-hi">${s.cmd}</span>`); render();
+        await sleep(260);
+      }
+    }
+  })();
+})();
+</script>
+</body>
+</html>

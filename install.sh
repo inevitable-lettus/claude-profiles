@@ -22,7 +22,10 @@ set -eu
 
 REPO_URL="${CLAUDE_PROFILES_REPO:-https://github.com/inevitable-lettus/claude-profiles.git}"
 INSTALL_DIR="${CLAUDE_PROFILES_INSTALL_DIR:-$HOME/.claude-profiles}"
-BRANCH="${CLAUDE_PROFILES_BRANCH:-main}"
+# Which ref to install. Unset means the newest release tag, so a push to main
+# never reaches people who installed a release. CLAUDE_PROFILES_BRANCH=main
+# opts into the development head; any tag or branch name works.
+REF="${CLAUDE_PROFILES_BRANCH:-}"
 
 if [ -t 1 ]; then
   B=$(printf '\033[1m'); G=$(printf '\033[32m'); Y=$(printf '\033[33m')
@@ -31,10 +34,15 @@ else
   B=''; G=''; Y=''; R=''; N=''
 fi
 
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+  *UTF-8*|*utf-8*|*UTF8*|*utf8*) OKG='✓' FAILG='✗' ;;
+  *) OKG='+' FAILG='x' ;;
+esac
+
 say()  { printf '%s\n' "$*"; }
-ok()   { printf '%s  OK  %s %s\n' "$G" "$N" "$*"; }
-warn() { printf '%s WARN %s %s\n' "$Y" "$N" "$*"; }
-die()  { printf '%s FATAL%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
+ok()   { printf '  %s%s%s %s\n' "$G" "$OKG" "$N" "$*"; }
+warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
+die()  { printf '%s%s error:%s %s\n' "$R" "$FAILG" "$N" "$*" >&2; exit 1; }
 
 say "${B}claude-profiles installer${N}"
 say ""
@@ -60,6 +68,16 @@ case "$(uname -s)" in
 esac
 ok "Platform: $PLATFORM"
 
+if [ -z "$REF" ]; then
+  # Plain x.y.z tags only, sorted numerically field by field — POSIX sort
+  # has no version sort, and a pre-release tag should never be the default.
+  REF="$(git ls-remote --tags --refs "$REPO_URL" 'v*' 2>/dev/null \
+         | sed 's#.*refs/tags/v##' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+         | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)" || REF=""
+  if [ -n "$REF" ]; then REF="v$REF"; else REF=main; fi
+fi
+ok "Version: $REF"
+
 have claude || warn "The 'claude' CLI is not on your PATH. Install it first if you want the CLI half: https://code.claude.com/docs/en/setup"
 
 # ---------------------------------------------------------------------------
@@ -67,17 +85,17 @@ have claude || warn "The 'claude' CLI is not on your PATH. Install it first if y
 # ---------------------------------------------------------------------------
 if [ -d "$INSTALL_DIR/.git" ]; then
   say "Updating $INSTALL_DIR"
-  git -C "$INSTALL_DIR" fetch --quiet origin "$BRANCH" || die "Could not fetch from origin."
-  git -C "$INSTALL_DIR" checkout --quiet "$BRANCH"
-  git -C "$INSTALL_DIR" reset --hard --quiet "origin/$BRANCH"
-  ok "Updated to $(git -C "$INSTALL_DIR" rev-parse --short HEAD)"
+  # FETCH_HEAD, detached: the same two lines work for a tag and a branch.
+  git -C "$INSTALL_DIR" fetch --quiet --depth 1 origin "$REF" || die "Could not fetch $REF from origin."
+  git -C "$INSTALL_DIR" checkout --quiet --force FETCH_HEAD
+  ok "Updated to $REF ($(git -C "$INSTALL_DIR" rev-parse --short HEAD))"
 elif [ -e "$INSTALL_DIR" ]; then
   die "$INSTALL_DIR exists but is not a git checkout. Move it aside and re-run."
 else
   say "Cloning into $INSTALL_DIR"
-  git clone --quiet --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR" \
+  git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$INSTALL_DIR" \
     || die "Clone failed."
-  ok "Cloned $(git -C "$INSTALL_DIR" rev-parse --short HEAD)"
+  ok "Cloned $REF ($(git -C "$INSTALL_DIR" rev-parse --short HEAD))"
 fi
 
 chmod +x "$INSTALL_DIR/bin/claude-profiles" "$INSTALL_DIR/tests"/*.sh 2>/dev/null || true

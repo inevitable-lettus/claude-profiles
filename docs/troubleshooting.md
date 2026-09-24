@@ -42,9 +42,12 @@ env | grep -E 'ANTHROPIC|CLAUDE_CODE_USE'
 
 ### On macOS specifically
 
-If the profile uses `config-dir` auth, it **cannot work**. On macOS,
-`CLAUDE_CONFIG_DIR` separates settings and history but not the login — both
-profiles read the same Keychain item. `doctor` reports this as a hard failure.
+Current Claude Code stores each config directory's login in its own Keychain
+item, `Claude Code-credentials-<hash>`. `doctor` looks for it. If it reports
+"no Keychain login found yet" after you have logged in, your Claude Code build
+probably predates per-directory items, and both profiles are sharing
+`Claude Code-credentials`. Update Claude Code, or switch that profile to a
+token:
 
 ```bash
 claude-profiles add work --auth oauth-token

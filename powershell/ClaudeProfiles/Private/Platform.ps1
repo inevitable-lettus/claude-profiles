@@ -115,12 +115,10 @@ function Get-CpDefaultDesktopDir {
 # Must agree with platform_default_auth_mode() in lib/platform.sh, or a
 # registry written on one implementation would be wrong on the other.
 #
-# config-dir everywhere except macOS: on Windows and Linux, CLAUDE_CONFIG_DIR
-# relocates .credentials.json and so isolates the login by itself. On macOS
-# credentials live in a single shared Keychain item that CLAUDE_CONFIG_DIR
-# does not touch, so a token is required.
+# config-dir everywhere. On Windows and Linux, CLAUDE_CONFIG_DIR relocates
+# .credentials.json; on macOS, current Claude Code keys its Keychain item to
+# the config directory. Either way the variable isolates the login by itself.
 function Get-CpDefaultAuthMode {
-    if ($script:CpIsMacOS) { return 'oauth-token' }
     return 'config-dir'
 }
 

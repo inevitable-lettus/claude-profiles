@@ -1,22 +1,23 @@
 # lib/cli.sh
 #
 # The Claude Code CLI half: running `claude` as a profile, and managing the
-# OAuth token that macOS profiles need.
+# optional OAuth token.
 #
-# TWO AUTH MODES, and which one you get is a property of the platform:
+# TWO AUTH MODES. config-dir is the default everywhere:
 #
 #   config-dir     CLAUDE_CONFIG_DIR alone. On Linux and Windows the docs are
 #                  explicit that setting it relocates .credentials.json into
-#                  that directory, so the login is isolated by the same
-#                  variable that isolates settings and history. You run
-#                  /login once per profile and Claude Code does the rest.
+#                  that directory. On macOS, current Claude Code stores the
+#                  login in a Keychain item whose name is derived from the
+#                  config directory (platform_macos_keychain_service), so the
+#                  same variable isolates it there too. You run /login once
+#                  per profile and Claude Code does the rest.
 #
-#   oauth-token    CLAUDE_CONFIG_DIR plus CLAUDE_CODE_OAUTH_TOKEN. Needed on
-#                  macOS, where credentials live in the Keychain under one
-#                  fixed item that CLAUDE_CONFIG_DIR does not separate — so
-#                  the second /login would overwrite the first. The token sits
-#                  at precedence rank 5, above the rank 6 subscription login,
-#                  and therefore wins over whatever is in the Keychain.
+#   oauth-token    CLAUDE_CONFIG_DIR plus CLAUDE_CODE_OAUTH_TOKEN. For CI,
+#                  headless machines, and Claude Code builds old enough to
+#                  keep every macOS login in one fixed Keychain item. The
+#                  token sits at precedence rank 5, above the rank 6
+#                  subscription login, and therefore wins over the Keychain.
 #
 # THE TWO COSTS OF oauth-token, both documented upstream, both surfaced by
 # `doctor` and by `add` at the moment you choose it:

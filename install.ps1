@@ -15,7 +15,8 @@
 $ErrorActionPreference = 'Stop'
 
 $RepoUrl    = if ($env:CLAUDE_PROFILES_REPO) { $env:CLAUDE_PROFILES_REPO } else { 'https://github.com/inevitable-lettus/claude-profiles.git' }
-$Branch     = if ($env:CLAUDE_PROFILES_BRANCH) { $env:CLAUDE_PROFILES_BRANCH } else { 'main' }
+# Unset means the newest release tag, resolved after git is found below.
+$Branch     = $env:CLAUDE_PROFILES_BRANCH
 $InstallDir = if ($env:CLAUDE_PROFILES_INSTALL_DIR) { $env:CLAUDE_PROFILES_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'claude-profiles\src' }
 
 function Say  { param([string]$m) Write-Host $m }
@@ -46,22 +47,32 @@ if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
 # ---------------------------------------------------------------------------
 # 2. Clone or update
 # ---------------------------------------------------------------------------
+if (-not $Branch) {
+    $Branch = git ls-remote --tags --refs $RepoUrl 'v*' 2>$null |
+        ForEach-Object { ($_ -split 'refs/tags/')[-1] } |
+        Where-Object { $_ -match '^v\d+\.\d+\.\d+$' } |
+        Sort-Object { [version]$_.Substring(1) } |
+        Select-Object -Last 1
+    if (-not $Branch) { $Branch = 'main' }
+}
+Ok "Version: $Branch"
+
 if (Test-Path -LiteralPath (Join-Path $InstallDir '.git')) {
     Say "Updating $InstallDir"
-    git -C $InstallDir fetch --quiet origin $Branch
-    if ($LASTEXITCODE -ne 0) { Die 'Could not fetch from origin.' }
-    git -C $InstallDir checkout --quiet $Branch
-    git -C $InstallDir reset --hard --quiet "origin/$Branch"
-    Ok "Updated to $(git -C $InstallDir rev-parse --short HEAD)"
+    # FETCH_HEAD, detached: the same two lines work for a tag and a branch.
+    git -C $InstallDir fetch --quiet --depth 1 origin $Branch
+    if ($LASTEXITCODE -ne 0) { Die "Could not fetch $Branch from origin." }
+    git -C $InstallDir checkout --quiet --force FETCH_HEAD
+    Ok "Updated to $Branch ($(git -C $InstallDir rev-parse --short HEAD))"
 } elseif (Test-Path -LiteralPath $InstallDir) {
     Die "$InstallDir exists but is not a git checkout. Move it aside and re-run."
 } else {
     Say "Cloning into $InstallDir"
     $parent = Split-Path -Parent $InstallDir
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    git clone --quiet --depth 1 --branch $Branch $RepoUrl $InstallDir
+    git -c advice.detachedHead=false clone --quiet --depth 1 --branch $Branch $RepoUrl $InstallDir
     if ($LASTEXITCODE -ne 0) { Die 'Clone failed.' }
-    Ok "Cloned $(git -C $InstallDir rev-parse --short HEAD)"
+    Ok "Cloned $Branch ($(git -C $InstallDir rev-parse --short HEAD))"
 }
 
 # ---------------------------------------------------------------------------

@@ -54,31 +54,38 @@ unset _lib
 
 
 usage() {
+  # Styling only when stdout is a terminal: `claude-profiles --help | less`
+  # should not fill the pager with escape codes.
+  local h="" b="" d="" r=""
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    h="$C_ACCENT$C_BOLD" b=$'\033[1m' d=$'\033[2m' r=$'\033[0m'
+    [ -n "$h" ] || h="$b"
+  fi
   cat <<EOF
-claude-profiles $VERSION — run several Claude accounts on one machine
+${h}claude-profiles${r} ${d}$VERSION${r}  run several Claude accounts on one machine
 
-USAGE
+${b}Usage${r}
   claude-profiles <command> [args]
 
-SETUP
+${b}Setup${r}
   init                          create the registry; adopt an existing setup
   add <name> [options]          register a profile
   remove <name>                 unregister a profile (asks about its data)
   list [--json]                 show every profile
 
-USING A PROFILE
+${b}Using a profile${r}
   run <name> [-- args...]       run Claude Code as that profile
   shell <name>                  subshell where plain 'claude' is that profile
   desktop <name>                launch the desktop app on that profile
   whoami                        which profile is this shell on?
 
-WORKFLOW
+${b}Workflow${r}
   use <name>                    write .claude-profile here, for auto-switching
   prompt                        active profile, for a prompt or statusline
   env <name> | env --unset      shell-eval'able environment (used by the hook)
   shell-init <zsh|bash|pwsh>    the line to put in your shell rc
 
-MAINTENANCE
+${b}Maintenance${r}
   doctor [<name>] [--json] [--probe]    health check
   token refresh <name>          generate and store a new OAuth token
   install-launcher <name>       clickable launcher for the desktop profile
@@ -86,7 +93,7 @@ MAINTENANCE
   mcp-config <name>             path to that profile's MCP template
   uninstall                     remove everything, asking about each item
 
-ADD OPTIONS
+${b}Add options${r}
   --cli / --no-cli              manage a Claude Code account (default: yes)
   --desktop / --no-desktop      manage a desktop instance (default: if found)
   --auth <config-dir|oauth-token>
@@ -95,7 +102,7 @@ ADD OPTIONS
   --app-path <path>
   --description <text>
 
-Docs: README.md, and docs/ for the per-platform detail.
+${d}Docs: https://github.com/inevitable-lettus/claude-profiles${r}
 EOF
 }
 
@@ -262,16 +269,6 @@ cmd_add() {
       *) die "--auth must be 'config-dir' or 'oauth-token'" ;;
     esac
 
-    # config-dir on macOS does not isolate the login: credentials live in one
-    # shared Keychain item that CLAUDE_CONFIG_DIR does not touch, so the
-    # second /login overwrites the first. Allowed — someone may be scripting
-    # a registry for another machine — but never silently.
-    if [ "$auth" = "config-dir" ] && [ "$(platform_id)" = "macos" ]; then
-      warn "On macOS, CLAUDE_CONFIG_DIR does NOT separate the login — both profiles"
-      warn "would read the same Keychain item and the second /login would overwrite"
-      warn "the first. Use --auth oauth-token unless you know why you want this."
-    fi
-
     reg_set_str ".profiles.$name.cli.configDir" "$(path_contract "$config_dir")"
     reg_set_str ".profiles.$name.cli.auth" "$auth"
   elif [ "$updating" = "1" ]; then
@@ -326,13 +323,10 @@ EOF
     cli_create_config_dir "$name"
 
     if [ "$auth" = "oauth-token" ]; then
-      header "This profile needs an OAuth token"
-      say "On $(platform_label), CLAUDE_CONFIG_DIR separates settings, history and"
-      say "sessions — but not the login. Both profiles would read the same"
-      say "Keychain item, so the second /login overwrites the first."
-      say ""
-      say "A long-lived OAuth token sidesteps that: it sits above the"
-      say "subscription login in Claude Code's credential precedence."
+      header "This profile uses an OAuth token"
+      say "A long-lived OAuth token sits above the subscription login in"
+      say "Claude Code's credential precedence. Useful for CI and headless"
+      say "machines; for everyday use, --auth config-dir is simpler."
       say ""
       say "${C_BOLD}Two costs, decide before you continue:${C_RESET}"
       say "  1. A token profile cannot use Remote Control or claude.ai"
@@ -353,9 +347,14 @@ EOF
       fi
     else
       header "Log in to this profile"
-      say "On $(platform_label), CLAUDE_CONFIG_DIR relocates .credentials.json into"
-      say "the profile's own directory, so the login is isolated by that"
-      say "variable alone. Nothing else to configure — just log in:"
+      if [ "$(platform_id)" = "macos" ]; then
+        say "Claude Code keys its Keychain item to CLAUDE_CONFIG_DIR, so this"
+        say "profile's login is stored separately from your primary account's."
+      else
+        say "CLAUDE_CONFIG_DIR relocates .credentials.json into the profile's"
+        say "own directory, so the login is isolated by that variable alone."
+      fi
+      say "Nothing else to configure. Log in once:"
       say ""
       say "    claude-profiles run $name -- /login"
     fi
@@ -397,38 +396,46 @@ cmd_list() {
     return 0
   fi
 
-  local name active
+  local name active width=7 dir kinds desc marker colour
   active="${CLAUDE_ACTIVE_PROFILE:-}"
 
-  printf '\n' >&2
-  for name in $names; do
-    if [ "$name" = "$active" ]; then
-      printf '%s* %s%s' "$C_GREEN$C_BOLD" "$name" "$C_RESET" >&2
-    else
-      printf '  %s%s%s' "$C_BOLD" "$name" "$C_RESET" >&2
-    fi
-    local desc; desc="$(reg_get_or ".profiles.$name.description" "")"
-    [ -n "$desc" ] && printf '%s  — %s%s' "$C_DIM" "$desc" "$C_RESET" >&2
-    printf '\n' >&2
+  # Column width from the longest name, so the table lines up however people
+  # name things. "primary" is the floor because it is always the first row.
+  for name in $names; do [ "${#name}" -gt "$width" ] && width=${#name}; done
 
+  # list_row <marker> <colour> <name> <dir> <kinds> <description>
+  list_row() {
+    printf '  %s%s%s %s%-*s%s  %-26s %s%-15s%s %s%s%s\n' \
+      "$2" "$1" "$C_RESET" "$C_BOLD" "$width" "$3" "$C_RESET" \
+      "$4" "$C_DIM" "$5" "$C_RESET" "$C_DIM" "$6" "$C_RESET" >&2
+  }
+
+  printf '\n' >&2
+  if [ -z "$active" ]; then marker="$G_ON" colour="$C_ACCENT"; else marker="$G_OFF" colour="$C_DIM"; fi
+  list_row "$marker" "$colour" "primary" "$(tilde "$(platform_primary_cli_config_dir)")" "default" "your normal login"
+
+  for name in $names; do
+    dir="" kinds=""
     if cli_profile_configured "$name"; then
-      printf '      cli      %s  (%s)\n' \
-        "$(reg_get_or ".profiles.$name.cli.configDir" "")" \
-        "$(cli_auth_mode "$name")" >&2
+      dir="$(reg_get_or ".profiles.$name.cli.configDir" "")"
+      kinds="cli"
+      [ "$(cli_auth_mode "$name")" = "oauth-token" ] && kinds="cli+token"
     fi
     if desktop_profile_configured "$name"; then
-      local mirror_note=""
-      desktop_is_mirrored "$name" && mirror_note="  [mirrored app]"
-      printf '      desktop  %s%s\n' \
-        "$(reg_get_or ".profiles.$name.desktop.userDataDir" "")" "$mirror_note" >&2
+      [ -n "$dir" ] || dir="$(reg_get_or ".profiles.$name.desktop.userDataDir" "")"
+      kinds="${kinds:+$kinds, }desktop"
+      desktop_is_mirrored "$name" && kinds="$kinds*"
     fi
+    desc="$(reg_get_or ".profiles.$name.description" "")"
+    if [ "$name" = "$active" ]; then marker="$G_ON" colour="$C_ACCENT"; else marker="$G_OFF" colour="$C_DIM"; fi
+    list_row "$marker" "$colour" "$name" "$(tilde "$dir")" "$kinds" "$desc"
   done
   printf '\n' >&2
 
   if [ -n "$active" ]; then
-    info "This shell is on '$active'."
+    info "This shell is on '$active'. Details: claude-profiles list --json"
   else
-    info "This shell is on the primary account."
+    info "This shell is on the primary account. Details: claude-profiles list --json"
   fi
 }
 
@@ -598,6 +605,9 @@ cmd_whoami() {
     printf 'Config dir:  %s\n' "${CLAUDE_CONFIG_DIR:-unset}"
     if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
       printf 'Auth:        CLAUDE_CODE_OAUTH_TOKEN (precedence rank 5)\n'
+    elif [ "$(platform_id)" = "macos" ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+      printf 'Auth:        macOS Keychain "%s" via /login\n' \
+        "$(platform_macos_keychain_service "$CLAUDE_CONFIG_DIR" || printf 'Claude Code-credentials-?')"
     else
       printf 'Auth:        %s/.credentials.json via /login\n' "${CLAUDE_CONFIG_DIR:-?}"
     fi

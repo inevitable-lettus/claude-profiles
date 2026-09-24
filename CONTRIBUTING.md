@@ -14,10 +14,10 @@ are written down. The three that catch people:
 
 1. **macOS ships bash 3.2.** No associative arrays, no `${var,,}`, no
    `mapfile`, no `readlink -f`. If it needs bash 4, it does not run on a Mac.
-2. **The auth-mode asymmetry is the point.** `CLAUDE_CONFIG_DIR` isolates the
-   login on Windows and Linux but not on macOS. The token machinery is a macOS
-   workaround, not the design. If you are adding token handling to a Windows
-   code path, check whether you actually need it.
+2. **config-dir auth is the default everywhere.** `CLAUDE_CONFIG_DIR`
+   isolates the login on Windows and Linux (`.credentials.json`) and on
+   macOS (a per-directory Keychain item). Token auth is an option for CI and
+   older Claude Code builds. Do not make a new code path depend on it.
 3. **The primary account is never written to.** No exceptions, no new code
    paths.
 

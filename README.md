@@ -1,10 +1,44 @@
-# claude-profiles
+<p align="center">
+  <a href="https://inevitable-lettus.github.io/claude-profiles/"><img src="assets/banner.svg" alt="claude-profiles: several Claude accounts on one machine. The right one, every time you cd." width="100%"></a>
+</p>
 
-Run several Claude accounts on one machine — Claude Code CLI and the desktop
-app — each with its own isolated profile, switching automatically as you move
-between projects.
+<p align="center">
+  <a href="https://github.com/inevitable-lettus/claude-profiles/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/inevitable-lettus/claude-profiles?style=flat-square&color=d97757&labelColor=1a1917"></a>
+  <a href="https://github.com/inevitable-lettus/claude-profiles/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/inevitable-lettus/claude-profiles/ci.yml?branch=main&style=flat-square&label=tests&labelColor=1a1917"></a>
+  <img alt="macOS, Linux, Windows" src="https://img.shields.io/badge/macOS%20·%20Linux%20·%20Windows-1a1917?style=flat-square">
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-1a1917?style=flat-square"></a>
+</p>
 
-macOS, Windows and Linux.
+<p align="center">
+  <a href="https://inevitable-lettus.github.io/claude-profiles/">Website</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="docs/">Docs</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
+
+---
+
+You have a personal Claude account and one from work, or two clients who
+should never share history. Claude Code has one login per machine, so you
+log out, log in, and eventually run the wrong one in the wrong repo.
+
+**claude-profiles** gives each account an isolated profile, for Claude Code
+*and* the desktop app, and switches automatically when you `cd` into a
+project.
+
+- **Per-directory switching.** Drop a one-line `.claude-profile` in a repo.
+  Plain `claude` runs as the right account there. No prefix to remember.
+- **Desktop app, side by side.** Two instances with separate logins, MCP
+  servers and window state, each with a clickable launcher.
+- **`doctor`.** One command that tells you what an update broke, what
+  outranks your profile credential, and which MCP ports collide.
+- **Readable and conservative.** Bash and PowerShell, no daemon, no binary.
+  Never touches `~/.claude`, never edits your shell rc, never prints a secret.
+
+<p align="center">
+  <img src="assets/terminal.svg" alt="claude-profiles list, then cd into a project switches the shell to the work profile and doctor passes" width="100%">
+</p>
 
 > Not affiliated with Anthropic. This drives documented environment variables
 > and an Electron command-line flag; none of it is a supported API. See
@@ -20,120 +54,105 @@ macOS, Windows and Linux.
 curl -fsSL https://raw.githubusercontent.com/inevitable-lettus/claude-profiles/main/install.sh | sh
 ```
 
-**Windows**
+**Windows (PowerShell 5.1 or 7+)**
 
 ```powershell
 irm https://raw.githubusercontent.com/inevitable-lettus/claude-profiles/main/install.ps1 | iex
 ```
 
-Neither installer edits your shell configuration, creates a profile, or reads
-a credential. Both print the one line to add yourself.
+Both install the **latest release** into your home directory and link the
+command onto your PATH. Neither edits your shell configuration, creates a
+profile, reads a credential or needs admin rights. Run the same line again to
+update. `CLAUDE_PROFILES_BRANCH=main` tracks the development head instead, and
+`CLAUDE_PROFILES_BRANCH=v1.0.0` pins a version.
 
-Then:
+Requirements: `git`, and bash 3.2+ (what macOS ships) or PowerShell.
+
+## Quick start
 
 ```bash
+# 1. hook your shell (or: claude-profiles shell-init bash | pwsh)
+echo 'eval "$(claude-profiles shell-init zsh)"' >> ~/.zshrc && exec zsh
+
+# 2. register a second account and log in to it once
 claude-profiles init
 claude-profiles add work
-claude-profiles doctor
-```
+claude-profiles run work -- /login
 
----
-
-## What you get
-
-```bash
-claude                    # your primary account, completely unchanged
-claude-work               # the second account
-claude-profiles list      # what you have
-claude-profiles doctor    # is any of it broken?
-```
-
-And the part that actually matters day to day — drop a `.claude-profile` file
-in a project and the account switches when you `cd` into it:
-
-```bash
+# 3. pin a project to it
 cd ~/code/agency-saas
 claude-profiles use work        # writes .claude-profile
 
-cd ~/code/side-project          # back to primary, automatically
-cd ~/code/agency-saas           # back to work, automatically
+claude-profiles doctor          # is any of it broken?
 ```
 
-No prefix to remember, so no chance of burning the wrong account's quota
-because you forgot one.
+Your existing login is untouched and stays the **primary** account. After
+setup:
+
+```bash
+claude                    # primary, or whatever .claude-profile says here
+claude-work               # the work account, from anywhere
+cd ~/code/side-project    # back to primary, automatically
+```
 
 ---
 
-## How it works, and why it differs per platform
+## How it works
 
-Two separate problems, and the hard one is not the same on every OS.
+Two separate problems: the CLI and the desktop app.
 
 ### The CLI half
 
-`CLAUDE_CONFIG_DIR` separates settings, history, projects and sessions
-everywhere. Whether it separates the **login** is the whole question, and
-[the docs are explicit](https://code.claude.com/docs/en/authentication):
+`CLAUDE_CONFIG_DIR` points Claude Code at a different config directory.
+That separates settings, history, projects and sessions everywhere, and it
+separates the **login** too:
 
-> On macOS, credentials are stored in the encrypted macOS Keychain. On Linux,
-> credentials are stored in `~/.claude/.credentials.json` […] On Windows,
-> credentials are stored in `%USERPROFILE%\.claude\.credentials.json` […] If
-> you've set the `CLAUDE_CONFIG_DIR` environment variable **on Linux or
-> Windows**, the `.credentials.json` file lives under that directory instead.
+| | Where a profile's login lives |
+|---|---|
+| **macOS** | Keychain item `Claude Code-credentials-<hash of the config dir>` |
+| **Linux** | `<config dir>/.credentials.json` |
+| **Windows** | `<config dir>\.credentials.json` |
 
-macOS is excluded from that last sentence deliberately.
+So every profile is `/login` once and done. `doctor` checks that each
+profile's login is where it should be.
 
-| | Login isolated by | What you do |
-|---|---|---|
-| **Windows** | `CLAUDE_CONFIG_DIR` alone | `/login` once per profile. That's it. |
-| **Linux** | `CLAUDE_CONFIG_DIR` alone | Same. |
-| **macOS** | `CLAUDE_CONFIG_DIR` + `CLAUDE_CODE_OAUTH_TOKEN` | Generate a token — both profiles otherwise share one Keychain item, so the second `/login` overwrites the first. |
-
-So the token machinery is a **macOS workaround**, not the design. On Windows
-and Linux you never touch it.
-
-The token sits at [rank 5 in the credential precedence](https://code.claude.com/docs/en/authentication#authentication-precedence),
-above the rank 6 subscription login, which is why it wins over the Keychain.
-Two costs, both real and both surfaced by `doctor`:
-
-- A token profile **cannot use Remote Control or claude.ai connectors**. Local
-  MCP servers still work. Put whichever account you use with connectors on the
-  primary profile.
-- It **expires after a year**. `doctor` starts warning at day 335.
-- And one that is easy to miss: **`claude --bare` ignores the token entirely**,
-  so a bare-mode script under a token profile silently runs as your primary
-  account. `claude-profiles run` warns when it sees `--bare`.
+The macOS naming is observed behaviour of current Claude Code, not a
+documented contract. Older builds kept every Mac login in one Keychain item,
+and for those (and for CI) there is token auth:
+`claude-profiles add <name> --auth oauth-token`. It costs Remote Control and
+claude.ai connectors, and the token expires after a year.
+[docs/macos.md](docs/macos.md) has the detail.
 
 ### The desktop half
 
 Electron's `--user-data-dir` points an instance at its own directory.
-Everything it stores — credential blob, MCP config, window state, caches —
+Everything it stores (credential blob, MCP config, window state, caches)
 lands there, so two directories are two independent instances.
 
 | | Difficulty | Why |
 |---|---|---|
 | **macOS** | Usually fine | The credential *might* live in one fixed Keychain slot. [One manual test](#the-one-test-that-matters) decides. |
 | **Linux** | Fine | The encrypted blob lives inside the user-data directory. Profiles cannot collide. |
-| **Windows** | Depends on how you installed it | A direct `.exe` install works immediately. An **MSIX / Microsoft Store** install cannot be launched with arguments at all — see [docs/windows.md](docs/windows.md). |
+| **Windows** | Depends on how you installed it | A direct `.exe` install works immediately. An **MSIX / Microsoft Store** install cannot be launched with arguments at all. See [docs/windows.md](docs/windows.md). |
 
 ---
 
 ## The one test that matters
 
-macOS only, and `doctor` prints it. It is worth repeating because it is the
-thing most people get wrong:
+macOS desktop only, and `doctor` prints it:
 
-1. Launch Claude normally. Confirm you are **account A**. Quit with Cmd+Q —
+1. Launch Claude normally. Confirm you are **account A**. Quit with Cmd+Q;
    closing the window is not enough.
 2. Run `claude-profiles desktop work`. Log in as **account B**. Quit with Cmd+Q.
 3. Launch Claude normally again.
 4. **Which account are you in?**
 
-Still A → it works, you're done. Now B, or logged out → the two profiles share
+Still A: it works, you're done. Now B, or logged out: the two profiles share
 one Keychain slot, and you need `claude-profiles mirror-app work`.
 
 **Step 4 is the whole test.** It is easy to stop after step 2, see account B
-working beautifully, and declare victory. Then a week later account A logs out
-and you have no idea why.
+working, and declare victory. Then a week later account A logs out and you
+have no idea why.
 
 ---
 
@@ -159,7 +178,7 @@ WORKFLOW
 
 MAINTENANCE
   doctor [<name>] [--json] [--probe]    health check
-  token refresh <name>          new OAuth token (macOS / CI)
+  token refresh <name>          new OAuth token (token-auth profiles)
   install-launcher <name>       clickable launcher for a desktop profile
   mirror-app <name>             escape hatch — read 'doctor' first
   mcp-config <name>             path to that profile's MCP template
@@ -255,6 +274,8 @@ powershell/ClaudeProfiles/       the Windows implementation
 schema/profiles.schema.json      the contract both implementations satisfy
 tests/                           smoke test, contract test, Pester suite
 docs/                            per-platform detail and design notes
+site/                            the project website (GitHub Pages)
+assets/                          README artwork
 ```
 
 The comments are the documentation. If something here looks arbitrary, the
@@ -284,7 +305,8 @@ on your actual machine, answer those.
 ## Troubleshooting
 
 **`claude-work` runs as the wrong account anyway.**
-Something above rank 5 is winning. `claude-profiles doctor` checks all of it,
+Something higher in the credential precedence is winning, like a stray
+`ANTHROPIC_API_KEY`. `claude-profiles doctor` checks all of it,
 including `apiKeyHelper`, which lives in a settings file rather than the
 environment and is easy to forget.
 
@@ -293,7 +315,9 @@ Quit Claude fully first (Cmd+Q). On macOS, `doctor` also checks whether the
 app sets `LSMultipleInstancesProhibited`.
 
 **Primary account gets logged out after using the secondary.** (macOS)
-The Keychain collision. `claude-profiles mirror-app <name>`.
+In the desktop app: the Keychain collision, `claude-profiles mirror-app <name>`.
+In the CLI: your Claude Code predates per-directory Keychain items. Update it,
+or use `--auth oauth-token` for that profile.
 
 **On Windows, nothing launches with a separate profile.**
 Almost certainly an MSIX install. `Invoke-ClaudeProfileDoctor` will say so.
@@ -338,7 +362,7 @@ Security issues: [SECURITY.md](SECURITY.md).
 
 ---
 
-## A note on which accounts
+## What it will not do
 
 Two accounts for two genuinely separate contexts — personal and an agency,
 say, or a personal account and one your employer provides — is ordinary, and

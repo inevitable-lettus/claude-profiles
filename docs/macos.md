@@ -29,43 +29,59 @@ not need a newer bash from Homebrew.
 
 ---
 
-## The CLI half: why a token is needed here and nowhere else
+## The CLI half: one login per config directory
 
-From [the authentication docs](https://code.claude.com/docs/en/authentication):
+Current Claude Code stores a Mac login in the Keychain under a service name
+derived from the config directory:
 
-> On macOS, credentials are stored in the encrypted macOS Keychain. […] If
-> you've set the `CLAUDE_CONFIG_DIR` environment variable **on Linux or
-> Windows**, the `.credentials.json` file lives under that directory instead.
+| Config directory | Keychain item |
+|---|---|
+| none (`~/.claude`) | `Claude Code-credentials` |
+| `CLAUDE_CONFIG_DIR=/Users/you/.claude-work` | `Claude Code-credentials-<8 hex>` |
 
-macOS is excluded from that sentence deliberately. So on a Mac:
-
-- `CLAUDE_CONFIG_DIR` separates settings, history, projects and sessions.
-- `CLAUDE_CONFIG_DIR` does **not** separate your login.
-
-Both profiles read the same Keychain item (`Claude Code-credentials`), so the
-second `/login` overwrites the first. You would not notice immediately — the
-second account works fine — and then the first one is silently logged out.
-
-The fix is `CLAUDE_CODE_OAUTH_TOKEN`. In the documented
-[credential precedence](https://code.claude.com/docs/en/authentication#authentication-precedence)
-it sits at **rank 5**, above the rank 6 subscription login, so it wins over
-whatever is in the Keychain.
+The suffix is the first eight hex digits of the SHA-256 of the
+`CLAUDE_CONFIG_DIR` string exactly as exported (NFC-normalised, not
+resolved), so `~/.claude-work` and `/Users/you/.claude-work/` are different
+items. claude-profiles always exports the same absolute path. Different directory, different
+Keychain item, independent login. So on a Mac, as on Linux and Windows:
 
 ```bash
-claude-profiles add work           # offers to set the token up
-claude-profiles token refresh work # or later
+claude-profiles add work             # config-dir auth, the default
+claude-profiles run work -- /login   # once
+```
+
+`doctor` computes the expected item name and checks that it exists. It reads
+metadata only (no `-w`), so macOS never prompts and no secret is read.
+
+> This naming is read from Claude Code's own source (2.1.260), not a
+> documented contract. The
+> [authentication docs](https://code.claude.com/docs/en/authentication) still
+> describe a single Keychain item on macOS. Older Claude Code builds did use
+> one fixed item, and there the second `/login` overwrote the first. If
+> `doctor` cannot find a profile's item after you log in, update Claude Code,
+> or fall back to token auth below.
+
+### Token auth, for CI and older builds
+
+`CLAUDE_CODE_OAUTH_TOKEN` sits at **rank 5** in the
+[credential precedence](https://code.claude.com/docs/en/authentication#authentication-precedence),
+above the rank 6 subscription login, so it wins over whatever is in the
+Keychain.
+
+```bash
+claude-profiles add ci --auth oauth-token
+claude-profiles token refresh ci
 ```
 
 `claude setup-token` runs in a separate terminal, prints the token once, and
-saves it nowhere — so you paste it in. Input is hidden, and it goes straight
+saves it nowhere, so you paste it in. Input is hidden, and it goes straight
 into the Keychain under a service name of our own
-(`claude-profiles-work-token`) that cannot collide with Anthropic's.
+(`claude-profiles-ci-token`) that cannot collide with Anthropic's.
 
-### Three costs
+It has three costs, which is why it is no longer the default:
 
 **A token profile cannot use Remote Control or claude.ai connectors.** Local
-MCP servers still work. So put whichever account you use with connectors on
-the **primary** (Keychain) profile, and the other one on the token.
+MCP servers still work.
 
 **The token expires after a year.** The creation date is recorded; `doctor`
 and every `claude-profiles run` start warning at day 335.
@@ -74,6 +90,13 @@ and every `claude-profiles run` start warning at day 335.
 script under a token profile silently runs as your primary account.
 `claude-profiles run` warns when it sees `--bare` in the arguments; nothing
 warns you if you invoke `claude --bare` directly.
+
+To move an existing token profile to config-dir auth:
+
+```bash
+claude-profiles add work --auth config-dir
+claude-profiles run work -- /login
+```
 
 ---
 
@@ -199,6 +222,7 @@ metadata only. A diagnostic command should not need your password.
 ~/.claude/                                     your PRIMARY account. Never touched.
 ~/Library/Application Support/Claude/          the primary desktop profile. Never touched.
 Keychain "Claude Code-credentials"             the primary login. Read-only for us.
+Keychain "Claude Code-credentials-<hash>"      each profile's login, written by Claude Code.
 ```
 
 XDG `~/.config` rather than `~/Library/Application Support` for our own state:

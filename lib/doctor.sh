@@ -20,13 +20,14 @@
 
 DOCTOR_FAILED=0
 DOCTOR_WARNED=0
+DOCTOR_PASSED=0
 DOCTOR_JSON=""
 
 # Report one finding. Level is ok | warn | fail | info.
 dr() {
   local level="$1" id="$2" message="$3"
   case "$level" in
-    ok)   [ "$DOCTOR_AS_JSON" = "1" ] || ok   "$message" ;;
+    ok)   DOCTOR_PASSED=$((DOCTOR_PASSED + 1)); [ "$DOCTOR_AS_JSON" = "1" ] || ok "$message" ;;
     warn) DOCTOR_WARNED=$((DOCTOR_WARNED + 1)); [ "$DOCTOR_AS_JSON" = "1" ] || warn "$message" ;;
     fail) DOCTOR_FAILED=$((DOCTOR_FAILED + 1)); [ "$DOCTOR_AS_JSON" = "1" ] || fail "$message" ;;
     info) [ "$DOCTOR_AS_JSON" = "1" ] || info "$message" ;;
@@ -136,12 +137,20 @@ doctor_check_cli_profile() {
 
   case "$auth" in
     config-dir)
-      dr ok "cli.$profile.auth" "[$profile] auth: CLAUDE_CONFIG_DIR alone — the login lives in $dir/.credentials.json"
-      if [ ! -f "$dir/.credentials.json" ]; then
-        dr warn "cli.$profile.login" "[$profile] no .credentials.json yet. Run: claude-profiles run $profile -- /login"
-      fi
       if [ "$(platform_id)" = "macos" ]; then
-        dr fail "cli.$profile.auth_platform" "[$profile] uses config-dir auth, but on macOS CLAUDE_CONFIG_DIR does NOT separate the login — both profiles share one Keychain item. Switch to token auth."
+        # Metadata lookup only — no -w, so macOS never prompts and no secret
+        # is read. See platform_macos_keychain_service for the naming.
+        local svc
+        if svc="$(platform_macos_keychain_service "$dir")" && have security \
+           && security find-generic-password -s "$svc" >/dev/null 2>&1; then
+          dr ok "cli.$profile.login" "[$profile] logged in — Keychain item \"$svc\""
+        else
+          dr warn "cli.$profile.login" "[$profile] no Keychain login found yet. Run: claude-profiles run $profile -- /login"
+        fi
+      elif [ -f "$dir/.credentials.json" ]; then
+        dr ok "cli.$profile.login" "[$profile] logged in — $(path_contract "$dir")/.credentials.json"
+      else
+        dr warn "cli.$profile.login" "[$profile] no .credentials.json yet. Run: claude-profiles run $profile -- /login"
       fi
       ;;
     oauth-token)
@@ -171,6 +180,9 @@ doctor_check_cli_profile() {
       # Two documented costs, worth restating where someone will read them.
       dr info "cli.$profile.token_limits" "[$profile] a token profile cannot use Remote Control or claude.ai connectors; local MCP servers still work"
       dr info "cli.$profile.bare" "[$profile] 'claude --bare' ignores CLAUDE_CODE_OAUTH_TOKEN and would run as your PRIMARY account"
+      if [ "$(platform_id)" = "macos" ]; then
+        dr info "cli.$profile.auth_hint" "[$profile] current Claude Code isolates macOS logins per config dir; 'claude-profiles add $profile --auth config-dir' drops the token and restores connectors"
+      fi
       ;;
   esac
 }
@@ -370,10 +382,14 @@ doctor_platform_windows() {
 doctor_manual_test() {
   [ "$(platform_id)" = "macos" ] || return 0
   [ "$DOCTOR_AS_JSON" = "1" ] && return 0
-  registry_profiles | grep -q . || return 0
 
-  local first
-  first="$(registry_profiles | head -1)"
+  # The test is about the desktop app's Keychain slot. With no desktop
+  # profile registered there is nothing for it to decide, so stay quiet.
+  local first="" name
+  for name in $(registry_profiles); do
+    desktop_profile_configured "$name" && { first="$name"; break; }
+  done
+  [ -n "$first" ] || return 0
 
   header "The manual test that actually decides it"
   cat >&2 <<EOF
@@ -498,12 +514,13 @@ doctor_run() {
       "$(platform_id)" "$DOCTOR_FAILED" "$DOCTOR_WARNED" "$DOCTOR_JSON"
   else
     header "Summary"
+    local tally="$DOCTOR_PASSED passed, $DOCTOR_WARNED warning(s), $DOCTOR_FAILED failure(s)"
     if [ "$DOCTOR_FAILED" -gt 0 ]; then
-      fail "$DOCTOR_FAILED failure(s), $DOCTOR_WARNED warning(s)"
+      fail "$tally"
     elif [ "$DOCTOR_WARNED" -gt 0 ]; then
-      warn "0 failures, $DOCTOR_WARNED warning(s)"
+      warn "$tally"
     else
-      ok "All checks passed"
+      ok "All $DOCTOR_PASSED checks passed"
     fi
   fi
 

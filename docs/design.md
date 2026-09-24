@@ -88,28 +88,30 @@ structure in bash 3.2 ends in `eval`.
 
 ---
 
-## The auth-mode asymmetry
+## The auth modes, and why the asymmetry went away
 
-This is the single most important fact in the codebase and the source of most
-of its complexity.
+Up to the first public release this section described an asymmetry:
 
 | | Login isolated by |
 |---|---|
 | Windows, Linux | `CLAUDE_CONFIG_DIR` alone |
-| macOS | `CLAUDE_CONFIG_DIR` + `CLAUDE_CODE_OAUTH_TOKEN` |
+| macOS (older Claude Code) | `CLAUDE_CONFIG_DIR` + `CLAUDE_CODE_OAUTH_TOKEN` |
 
 On Linux and Windows, setting `CLAUDE_CONFIG_DIR` relocates
-`.credentials.json` into that directory. On macOS credentials live in the
-Keychain under one fixed item that `CLAUDE_CONFIG_DIR` does not touch.
+`.credentials.json` into that directory. Older macOS builds kept every login
+in one fixed Keychain item that `CLAUDE_CONFIG_DIR` did not touch.
 
-So the entire token apparatus — `claude setup-token`, the secret store, the
-expiry countdown, the two documented costs — is a **macOS workaround, not the
-design**. `platform_default_auth_mode()` is where that is encoded, and
-everything else follows from it.
+Current Claude Code keys the macOS Keychain item to the config directory
+(`Claude Code-credentials-<sha256(dir)[:8]>`), so `config-dir` is now the
+default on every platform. The token mode stays, for CI, headless machines
+and older builds.
 
-Getting this backwards is the easiest way to make the tool worse. If you find
-yourself adding token handling to a Windows code path, check whether you
-actually need it.
+So the token apparatus (`claude setup-token`, the secret store, the expiry
+countdown, the documented costs) is an **option, not the design**.
+`platform_default_auth_mode()` is where the default is encoded.
+
+If you find yourself making a new code path depend on a token, check whether
+you actually need it.
 
 ---
 

@@ -3,7 +3,7 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.0] — 2026-08-07
+## [1.0.0] — 2026-09-24
 
 First public release. The pre-1.0 version was a personal macOS toolkit of six
 numbered scripts; this is a rewrite.
@@ -36,6 +36,15 @@ numbered scripts; this is a rewrite.
   `statusLine`.
 - **One-line installers** for all three platforms. Neither edits your shell
   configuration.
+- `doctor` finds each macOS profile's per-directory Keychain item (metadata
+  only, never the secret) and suggests moving token profiles to config-dir.
+- A redesigned terminal interface: status glyphs with an ASCII fallback, one
+  accent colour, `~`-shortened paths, a table for `list`, and a pass/warn/fail
+  tally at the end of `doctor`. `NO_COLOR` is honoured.
+- The installers pin to the **latest release tag** by default, so a push to
+  `main` never reaches people who installed a release.
+  `CLAUDE_PROFILES_BRANCH` selects any tag or branch.
+- A project website under `site/`, published to GitHub Pages.
 - Two checks for footguns that previously had no coverage: `apiKeyHelper`
   (precedence rank 4) outranking a profile token, and `claude --bare`
   ignoring `CLAUDE_CODE_OAUTH_TOKEN` entirely — which silently runs a
@@ -43,11 +52,14 @@ numbered scripts; this is a rewrite.
 
 ### Changed
 
-- **Token auth is now correctly scoped to macOS.** The pre-1.0 README
-  presented `CLAUDE_CODE_OAUTH_TOKEN` as how the CLI half works. It is a macOS
-  workaround: on Windows and Linux, `CLAUDE_CONFIG_DIR` relocates
-  `.credentials.json` and isolates the login on its own. New profiles default
-  to `config-dir` auth on those platforms and never ask for a token.
+- **config-dir auth is the default on every platform, including macOS.**
+  The pre-1.0 toolkit, and early 1.0 drafts, required
+  `CLAUDE_CODE_OAUTH_TOKEN` on macOS because Claude Code kept every Mac login
+  in one Keychain item. Current Claude Code names the item after the config
+  directory (`Claude Code-credentials-<sha256(dir)[:8]>`), so
+  `CLAUDE_CONFIG_DIR` isolates the login by itself. Profiles keep Remote
+  Control and claude.ai connectors, and nothing expires after a year. Token
+  auth remains available with `--auth oauth-token` for CI and older builds.
 - The six numbered scripts became subcommands. `claude-profiles init` adopts
   an existing pre-1.0 setup in place — nothing moved, copied, or logged out,
   including the old Keychain token.
