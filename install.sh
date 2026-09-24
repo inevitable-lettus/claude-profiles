@@ -93,8 +93,12 @@ elif [ -e "$INSTALL_DIR" ]; then
   die "$INSTALL_DIR exists but is not a git checkout. Move it aside and re-run."
 else
   say "Cloning into $INSTALL_DIR"
-  git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$INSTALL_DIR" \
-    || die "Clone failed."
+  # Output is held back and shown only on failure: a shallow clone of an
+  # annotated tag prints a harmless "is not a commit!" warning otherwise.
+  if ! CLONE_OUT="$(git -c advice.detachedHead=false clone --quiet --depth 1 --branch "$REF" "$REPO_URL" "$INSTALL_DIR" 2>&1)"; then
+    printf '%s\n' "$CLONE_OUT" >&2
+    die "Clone failed."
+  fi
   ok "Cloned $REF ($(git -C "$INSTALL_DIR" rev-parse --short HEAD))"
 fi
 

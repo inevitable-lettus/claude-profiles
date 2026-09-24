@@ -70,8 +70,10 @@ if (Test-Path -LiteralPath (Join-Path $InstallDir '.git')) {
     Say "Cloning into $InstallDir"
     $parent = Split-Path -Parent $InstallDir
     if (-not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-    git -c advice.detachedHead=false clone --quiet --depth 1 --branch $Branch $RepoUrl $InstallDir
-    if ($LASTEXITCODE -ne 0) { Die 'Clone failed.' }
+    # Output is held back and shown only on failure: a shallow clone of an
+    # annotated tag prints a harmless "is not a commit!" warning otherwise.
+    $cloneOut = git -c advice.detachedHead=false clone --quiet --depth 1 --branch $Branch $RepoUrl $InstallDir 2>&1
+    if ($LASTEXITCODE -ne 0) { $cloneOut | Write-Host; Die 'Clone failed.' }
     Ok "Cloned $Branch ($(git -C $InstallDir rev-parse --short HEAD))"
 }
 
